@@ -1,16 +1,48 @@
 import argparse
 import asyncio
 import logging
+import math
 import sys
 
-from tbdedup import mbox
+from tbdedup import (
+    db,
+    mbox
+)
 
 LOG = logging.getLogger(__name__)
 
-async def processFile(filename):
-    LOG.info(f"Detecting MBox File Type of {filename}")
-    mbox_filetype = mbox.Mailbox.detect_mbox_type(filename)
-    LOG.info(f"Detected Mbox File Type of {mbox_filetype} for file {filename}")
+async def processFile(filename, storage):
+    #LOG.info(f"Detecting MBox File Type of {filename}")
+    #mbox_filetype = mbox.Mailbox.detect_mbox_type(filename)
+    #LOG.info(f"Detected Mbox File Type of {mbox_filetype} for file {filename}")
+
+    box = mbox.Mailbox(None, filename)
+
+    counter = 0
+    #for msg in mbox.Mailbox.getMessages(filename):
+    try:
+        LOG.info(f'Processing records...')
+        for msg in box.buildSummary():
+            msg.buildData()
+            storage.add_message(
+                msg.getHash(),  # hash
+                msg.getMsgId(), # id
+                filename, # location
+                msg.getMessageIDHeader(), # 2nd id from the headers
+                msg.getMessageIDHeaderHash(), # 2nd hash
+            )
+            counter = counter + 1
+            if math.fmod(counter, 10000) == 0:
+                LOG.info(f"Record Counter: {counter}")
+
+    except mbox.ErrInvalidFileFormat as ex:
+        LOG.error(f'Invalid file format detected: {ex}')
+
+    else:
+        LOG.info(f"Detected {storage.get_unique_message_count()} unique records")
+        LOG.info(f"Detected {counter} messages in {filename}")
+
+    
 
 async def asyncMain():
     argument_parser = argparse.ArgumentParser(
@@ -21,18 +53,14 @@ async def asyncMain():
         default=None,
         type=str,
         required=True,
-        help=(
-            'Directory to search for Thunderbird MBox Files',
-        ),
+        help='Directory to search for Thunderbird MBox Files',
     )
     argument_parser.add_argument(
         '--hash-storage', '-hs',
         default=None,
         type=str,
         required=False,
-        help=(
-            "",
-        ),
+        help="Specify where to store the database information",
     )
     argument_parser.add_argument(
         '--log-config',
@@ -61,13 +89,14 @@ async def asyncMain():
     log = logging.getLogger()
     locationProcessor = mbox.MailboxFolder(arguments.location)
     mboxfiles = await locationProcessor.getMboxFiles()
+    storage = db.MessageDatabase(arguments.hash_storage)
 
     allFiles = '\n'.join(mboxfiles)
     log.info(f"Found {len(mboxfiles)} files to process:\n{allFiles}")
     file_tasks = []
     for filename in mboxfiles:
         file_task = asyncio.create_task(
-            processFile(filename),
+            processFile(filename, storage),
         )
         file_tasks.append(file_task)
 
