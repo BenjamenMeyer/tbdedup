@@ -5,14 +5,17 @@ Table 1:
 - Hash, Message ID, Folder
 - Key: (Hash, Message ID)
 """
+import logging
 import sqlite3
+
+LOG = logging.getLogger(__name__)
 
 SCHEMAS = [
     {
         "version": 0,
         "changes": [
             "CREATE TABLE IF NOT EXISTS schema_version(version INT)",
-            "CREATE TABLE IF NOT EXISTS messages(hashid TEXT, messageid TEXT, messageid2 TEXT, hashid2 TEXT, location TEXT)",
+            "CREATE TABLE IF NOT EXISTS messages(hashid TEXT, diskhashid TEXT, messageid TEXT, messageid2 TEXT, hashid2 TEXT, location TEXT, startOffset INT, endOffset INT)",
         ],
     },
 ]
@@ -27,7 +30,7 @@ SELECT MAX(version) FROM schema_version
 
 
 ADD_MESSAGE = """
-INSERT INTO messages(hashid, messageid, messageid2, hashid2, location)  VALUES(:hashid, :messageid, :messageid2, :hashid2, :location)
+INSERT INTO messages(hashid, diskhashid, messageid, messageid2, hashid2, location, startOffset, endOffset)  VALUES(:hashid, :diskhashid, :messageid, :messageid2, :hashid2, :location, :startOffset, :endOffset)
 """
 
 GET_UNIQUE_MESSAGE_COUNT = """
@@ -39,7 +42,7 @@ SELECT DISTINCT hashid FROM messages
 """
 
 GET_MESSAGES_BY_HASH = """
-SELECT messageid, location FROM messages WHERE hashid = :hashid
+SELECT messageid, location, startOffset, endOffset, diskhashid FROM messages WHERE hashid = :hashid
 """
 
 class MessageDatabase(object):
@@ -73,16 +76,19 @@ class MessageDatabase(object):
         except Exception:
             return -1
 
-    def add_message(self, msg_hash, msg_id, msg_location, msg_id2, msg_hash2):
+    def add_message(self, msg_hash, msg_id, msg_location, msg_id2, msg_hash2, start_offset, end_offset, disk_hash):
         with self._db as cursor:
             result = cursor.execute(
                 ADD_MESSAGE,
                 {
                     "hashid": msg_hash,
+                    "diskhashid": disk_hash,
                     "messageid": msg_id,
                     "messageid2": msg_id2,
                     "hashid2": msg_hash2,
                     "location": msg_location,
+                    "startOffset": start_offset,
+                    "endOffset": end_offset,
                 },
             )
 
@@ -95,14 +101,22 @@ class MessageDatabase(object):
     def get_message_hashes(self):
         with self._db as cursor: 
             for msg_hash in cursor.execute(GET_MESSAGE_HASHES):
-                yield msg_hash
+                yield msg_hash[0]
 
     def get_messages_by_hash(self, hashid):
         with self._db as cursor:
-            for msg_id, msg_location in cursor.execute(
+            for msg_id, msg_location, start_offset, end_offset, disk_hashid in cursor.execute(
                 GET_MESSAGES_BY_HASH,
                 {
                     "hashid": hashid
                 },
             ):
-                yield (msg_id, msg_location)
+                yield {
+                    "hash": hashid,
+                    "messageid": msg_id,
+                    "location": msg_location,
+                    "start_offset": start_offset,
+                    "end_offset": end_offset,
+                    "length": end_offset - start_offset,
+                    "disk_hash": disk_hashid,
+                }

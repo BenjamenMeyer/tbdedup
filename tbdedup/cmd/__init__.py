@@ -1,5 +1,7 @@
 import argparse
 import asyncio
+import datetime
+import hashlib
 import logging
 import math
 import sys
@@ -12,24 +14,21 @@ from tbdedup import (
 LOG = logging.getLogger(__name__)
 
 async def processFile(filename, storage):
-    #LOG.info(f"Detecting MBox File Type of {filename}")
-    #mbox_filetype = mbox.Mailbox.detect_mbox_type(filename)
-    #LOG.info(f"Detected Mbox File Type of {mbox_filetype} for file {filename}")
-
     box = mbox.Mailbox(None, filename)
 
     counter = 0
-    #for msg in mbox.Mailbox.getMessages(filename):
     try:
         LOG.info(f'Processing records...')
         for msg in box.buildSummary():
-            msg.buildData()
             storage.add_message(
-                msg.getHash(),  # hash
+                msg.getHash(diskHash=False),  # hash for comparisons
                 msg.getMsgId(), # id
                 filename, # location
                 msg.getMessageIDHeader(), # 2nd id from the headers
                 msg.getMessageIDHeaderHash(), # 2nd hash
+                msg.start_offset,
+                msg.end_offset,
+                msg.getHash(diskHash=True), # hash to ensure we read the right thing
             )
             counter = counter + 1
             if math.fmod(counter, 10000) == 0:
@@ -39,10 +38,8 @@ async def processFile(filename, storage):
         LOG.error(f'Invalid file format detected: {ex}')
 
     else:
-        LOG.info(f"Detected {storage.get_unique_message_count()} unique records")
         LOG.info(f"Detected {counter} messages in {filename}")
 
-    
 
 async def asyncMain():
     argument_parser = argparse.ArgumentParser(
@@ -101,6 +98,34 @@ async def asyncMain():
         file_tasks.append(file_task)
 
     file_results = await asyncio.gather(*file_tasks)
+    LOG.info(f"Detected {storage.get_unique_message_count()} unique records")
+
+    utc_time = datetime.datetime.utcnow()
+    output_filename = utc_time.strftime("%Y%m%d_%H%M%S_deduplicated.mbox")
+    LOG.info(f"Writing unique records to {output_filename}")
+    with open(output_filename, "wb") as output_data:
+        wcounter = 0
+        for unique_hashid in storage.get_message_hashes():
+            for msg_for_hash in storage.get_messages_by_hash(unique_hashid):
+                msgData = mbox.Mailbox.getMessageFromFile(msg_for_hash)
+                msgDataHasher = hashlib.sha256()
+                msgDataHasher.update(msgData)
+                msgDataHash = msgDataHasher.hexdigest()
+                if msgDataHash != msg_for_hash['disk_hash']:
+                    LOG.info(f'Unable to rebuild message with hash {unique_hashid} - got {msgDataHash} - {msgData}')
+                    with open(f"{msgDataHash}.orig-{unique_hashid}.mboxrecord", "wb") as msg_recorder:
+                        msg_recorder.write(msgData)
+                        msg_recorder.flush()
+                    continue
+
+                output_data.write(msgData)
+                output_data.flush()
+
+                # just take the first entry
+                break
+
+            wcounter = wcounter + 1
+    LOG.info(f'Wrote {wcounter} records')
 
 
 # main is a simple wrapper for the setup's console_script
