@@ -66,6 +66,12 @@ async def asyncMain():
         help='Specify the log configuration data',
         metavar='Log config',
     )
+    argument_parser.add_argument(
+        '--msg-hash-source',
+        choices=['disk','parsed'],
+        help='Specify which source to use for the hash. `disk` means using the raw message off the disk. `parsed` means using everything but the MBOX FROM line that identifies the message',
+        default='parsed',
+    )
 
     arguments = argument_parser.parse_args()
     # log config is optional
@@ -83,6 +89,12 @@ async def asyncMain():
         log.addHandler(lf)
         log.setLevel(logging.DEBUG)
 
+    use_disk_data_for_hash = (
+        True
+        if arguments.msg_hash_source == 'disk'
+        else False # `parsed`
+    )
+
     log = logging.getLogger()
     locationProcessor = mbox.MailboxFolder(arguments.location)
     mboxfiles = await locationProcessor.getMboxFiles()
@@ -98,15 +110,18 @@ async def asyncMain():
         file_tasks.append(file_task)
 
     file_results = await asyncio.gather(*file_tasks)
-    LOG.info(f"Detected {storage.get_unique_message_count()} unique records")
+    LOG.info(f"[DISK  ] Detected {storage.get_unique_message_count(use_disk=True)} unique records")
+    LOG.info(f"[PARSED] Detected {storage.get_unique_message_count(use_disk=False)} unique records")
+    if storage.get_unique_message_count(use_disk=True) != storage.get_unique_message_count(use_disk=False):
+        LOG.info(f"** WARNING ** Hash Source Choice may result in different output results -- Using {'DISK' if use_disk_data_for_hash else 'PARSED'}")
 
     utc_time = datetime.datetime.utcnow()
     output_filename = utc_time.strftime("%Y%m%d_%H%M%S_deduplicated.mbox")
     LOG.info(f"Writing unique records to {output_filename}")
     with open(output_filename, "wb") as output_data:
         wcounter = 0
-        for unique_hashid in storage.get_message_hashes():
-            for msg_for_hash in storage.get_messages_by_hash(unique_hashid):
+        for unique_hashid in storage.get_message_hashes(use_disk=use_disk_data_for_hash):
+            for msg_for_hash in storage.get_messages_by_hash(unique_hashid, use_disk=use_disk_data_for_hash):
                 msgData = mbox.Mailbox.getMessageFromFile(msg_for_hash)
                 msgDataHasher = hashlib.sha256()
                 msgDataHasher.update(msgData)

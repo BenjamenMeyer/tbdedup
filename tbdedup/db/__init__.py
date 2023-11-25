@@ -2,8 +2,18 @@
 Database
 
 Table 1:
-- Hash, Message ID, Folder
-- Key: (Hash, Message ID)
+- Hash ID, Disk Hash ID, Message ID, Message ID 2, Hash ID 2, Location, Disk Start Offset, Disk End Offset 
+- There are no primary keys
+- Data should be looked up based on either the Hash ID or the Disk Hash ID
+- Message ID is not guaranteed to be unique; and Hash ID 2 is the hash of the Message ID (again, not guaranteed to be unique).
+- The Disk Hash ID is the hash of the entire message as read from the disk while the Hash ID is the hash of the parsed
+  message data excluding the MBOX `FROM` format line that distinguishes between the individual messages in the MBOX File Format.
+  Ideally these two values would generate the same unique record counts; however that cannot be guaranteed to be the case;
+  therefore the option is given for the caller to select between the two hashes.
+
+  In testing it was noticed that the disk hash count was twice the size of the non-disk hash count; upon examination of a small
+  set no actual difference between the two could be observed in the output data. Therefore it is recommended at this time
+  that the non-disk hash is used as it results in the smaller data set.
 """
 import logging
 import sqlite3
@@ -31,6 +41,18 @@ SELECT MAX(version) FROM schema_version
 
 ADD_MESSAGE = """
 INSERT INTO messages(hashid, diskhashid, messageid, messageid2, hashid2, location, startOffset, endOffset)  VALUES(:hashid, :diskhashid, :messageid, :messageid2, :hashid2, :location, :startOffset, :endOffset)
+"""
+
+DISK_GET_UNIQUE_MESSAGE_COUNT = """
+SELECT COUNT(*) FROM (SELECT DISTINCT diskhashid FROM messages)
+"""
+
+DISK_GET_MESSAGE_HASHES = """
+SELECT DISTINCT diskhashid FROM messages
+"""
+
+DISK_GET_MESSAGES_BY_HASH = """
+SELECT messageid, location, startOffset, endOffset, diskhashid FROM messages WHERE diskhashid = :diskhashid
 """
 
 GET_UNIQUE_MESSAGE_COUNT = """
@@ -92,23 +114,42 @@ class MessageDatabase(object):
                 },
             )
 
-    def get_unique_message_count(self):
+    def get_unique_message_count(self, use_disk=False):
         with self._db as cursor:
-            result = cursor.execute(GET_UNIQUE_MESSAGE_COUNT)
+            result = cursor.execute(
+                DISK_GET_UNIQUE_MESSAGE_COUNT
+                if use_disk
+                else GET_UNIQUE_MESSAGE_COUNT
+            )
             value = result.fetchone()
             return value[0]
 
-    def get_message_hashes(self):
+    def get_message_hashes(self, use_disk=False):
         with self._db as cursor: 
-            for msg_hash in cursor.execute(GET_MESSAGE_HASHES):
+            for msg_hash in cursor.execute(
+                DISK_GET_MESSAGE_HASHES
+                if use_disk
+                else GET_MESSAGE_HASHES
+            ):
                 yield msg_hash[0]
 
-    def get_messages_by_hash(self, hashid):
+    def get_messages_by_hash(self, hashid, use_disk=False):
         with self._db as cursor:
+            sqlquery = (
+                DISK_GET_MESSAGES_BY_HASH
+                if use_disk
+                else GET_MESSAGES_BY_HASH
+            )
+            sqlargs_key = (
+                "diskhashid"
+                if use_disk
+                else
+                "hashid"
+            )
             for msg_id, msg_location, start_offset, end_offset, disk_hashid in cursor.execute(
-                GET_MESSAGES_BY_HASH,
+                sqlquery,
                 {
-                    "hashid": hashid
+                    sqlargs_key: hashid
                 },
             ):
                 yield {
