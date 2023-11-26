@@ -89,7 +89,7 @@ Alternatively you may want to do the same in a Python VirtualEnv:
 .. code-block:: shell
 
     $ git clone https://github.com/BenjamenMeyer/tbdedup
-    $ python3 -m .venv 
+    $ python3 -m .venv
     $ source .venv/bin/activate
     (.venv) $ cd tbdedup
     (.venv) $ pip install .
@@ -98,22 +98,22 @@ This will put `tbdedup` into your environment based on your installation method.
 
 .. note:: PyPi likely also can install directly from Git without having to check it out first.
 
-Running
--------
+Running the Deduplication
+-------------------------
 
 `tbdedup` provides full support for Help documentation using the standard `-h` and `--help`
 command-line parameters. Here is the basic usage:
 
 .. code-block:: shell
 
-    $ tb-dedup --location <source location> --hash-storage <sqlite database storage location>
+    $ tb-dedup dedup --location <source location> --hash-storage <sqlite database storage location>
 
 For example if you want it to search `~/myfiles` and store the data in `~/myfiles.hashes.sqlite`
 you would run the following command:
 
 .. code-block:: shell
 
-    $ tb-dedup --location ~/myfiles --hash-storage ~/myfiles.hashes.sqlite 
+    $ tb-dedup dedup --location ~/myfiles --hash-storage ~/myfiles.hashes.sqlite
 
 `tbdedup` will output a timestamped file such as `20231123_091132_deduplicated.mbox` each time
 it is run, allowing you to select which file to use as the final copy to restore to your
