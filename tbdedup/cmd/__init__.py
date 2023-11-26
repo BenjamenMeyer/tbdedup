@@ -22,6 +22,7 @@ from tbdedup import (
     dedup,
     planner,
 )
+from tbdedup.planner import walk as planner_walk
 
 LOG = logging.getLogger(__name__)
 
@@ -79,6 +80,24 @@ async def asyncMain():
         help="Pattern to limit the files to if provided",
     )
     planner_parser.set_defaults(func=planner.asyncPlanner)
+
+    preplanner_parser = subparsers.add_parser('preplanner')
+    preplanner_parser.add_argument(
+        '--location', '-l',
+        default=None,
+        type=str,
+        required=True,
+        help='Directory to search for Thunderbird MBox Files',
+    )
+    preplanner_parser.add_argument(
+        '--pattern', '-p',
+        default="Inbox.sbd/",
+        type=str,
+        required=False,
+        help="Pattern split file paths in order to match common paths",
+    )
+    preplanner_parser.set_defaults(func=planner_walk.asyncPreplanner)
+    
 
     arguments = argument_parser.parse_args()
     # log config is optional
