@@ -62,6 +62,24 @@ async def asyncMain():
     )
     dedup_parser.set_defaults(func=dedup.asyncDedup)
 
+    planner_parser = subparsers.add_parser('planner')
+
+    planner_parser.add_argument(
+        '--location', '-l',
+        default=None,
+        type=str,
+        required=True,
+        help='Directory to search for Thunderbird MBox Files',
+    )
+    planner_parser.add_argument(
+        '--pattern', '-p',
+        default=None,
+        type=str,
+        required=False,
+        help="Pattern to limit the files to if provided",
+    )
+    planner_parser.set_defaults(func=planner.asyncPlanner)
+
     arguments = argument_parser.parse_args()
     # log config is optional
     if arguments.log_config is not None:
@@ -78,7 +96,11 @@ async def asyncMain():
         log.addHandler(lf)
         log.setLevel(logging.DEBUG)
 
-    await arguments.func(arguments)
+    result = await arguments.func(arguments)
+    if result is not None:
+        return result
+    else:
+        return 0
 
 # main is a simple wrapper for the setup's console_script
 def main():

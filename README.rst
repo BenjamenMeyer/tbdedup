@@ -98,6 +98,38 @@ This will put `tbdedup` into your environment based on your installation method.
 
 .. note:: PyPi likely also can install directly from Git without having to check it out first.
 
+Running the Planner
+-------------------
+
+`tbdedup` provides a planner capability that will search a path and symlink files into a path
+that can then be processed by the `dedup` functionality. This is useful for deduping multiple
+locations in a Thunderbird Profile that have folders that can be pattern matched while ignoring
+other folders.
+
+The planner will first build a listing of MBOX files. It will then create a timestamped folder
+where it is run and symlink each MBOX file into that folder. Finally, it will record the
+various data about the plan generation, the files found, and their associated symlink into
+a JSON formatted file called `mapping.json` stored inside the folder next to the generated
+symlinks. The `mapping.json` file allows for easy inspection of the plan, verification of
+the plan, and the ability to repeat the plan if needed as the input parameters are recorded
+in the map.
+
+If you want to check all of the folders in one pass you can simply call it as follows:
+
+.. code-block:: shell
+
+    $ tb-dedup planner --location "~/.thunderbird/dm8a9v53.default/Mail/Local Folders"
+
+This will produce a plan folder that will symlink every MBOX file within that path.
+However, suppose you only want to get the files that have a common name of "personal/favors"
+and it some how got copied multiple times across a variety of paths under the Local Folders.
+Then you could run the following:
+
+.. code-block:: shell
+
+    $ tb-dedup planner --location "~/.thunderbird/dm8a9v53.default/Mail/Local Folders" --pattern ".*\\personal\/favors$"
+
+
 Running the Deduplication
 -------------------------
 
