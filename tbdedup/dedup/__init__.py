@@ -53,7 +53,7 @@ async def processFile(filename, storage):
     else:
         LOG.info(f"Detected {counter} messages in {filename}")
 
-async def asyncDedup(options):
+async def dedupper(options):
     use_disk_data_for_hash = (
         True
         if options.msg_hash_source == 'disk'
@@ -105,3 +105,8 @@ async def asyncDedup(options):
 
             wcounter = wcounter + 1
     LOG.info(f'Wrote {wcounter} records')
+    return output_filename
+
+# wrap for the command-line
+async def asyncDedup(options):
+    await dedupper(options)

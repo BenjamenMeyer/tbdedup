@@ -46,18 +46,18 @@ def get_output_directory():
         else:
             return output_directory
 
-async def asyncPlanner(options):
+async def planner(options):
     locationProcessor = mbox.MailboxFolder(options.location)
     mboxfiles = await locationProcessor.getMboxFiles()
 
     try:
         pattern = (
-            re.compile(options.pattern)
-            if options.pattern is not None
+            re.compile(options.limit_pattern)
+            if options.limit_pattern is not None
             else None
         )
     except Exception:
-        LOG.error(f"Invalid Pattern Specific: {options.pattern}")
+        LOG.error(f"Invalid Pattern Specific: {options.limit_pattern}")
         return 1
 
     allFiles = '\n'.join(mboxfiles)
@@ -74,7 +74,7 @@ async def asyncPlanner(options):
     LOG.info(f"Linking to MBOX files to {output_directory}")
 
     file_mapping = {
-        "pattern": options.pattern,
+        "pattern": options.limit_pattern,
         "location": {
             "source": options.location,
             "output": output_directory,
@@ -117,3 +117,9 @@ async def asyncPlanner(options):
             indent=4,
             sort_keys=False,
         )
+
+    return (output_directory, mapping_file)
+
+# wrap for the command-line
+async def asyncPlanner(options):
+    await planner(options)

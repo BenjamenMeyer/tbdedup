@@ -43,7 +43,7 @@ def get_output_filename():
         else:
             return output_filename
 
-async def asyncPreplanner(options):
+async def preplan(options):
     locationProcessor = mbox.MailboxFolder(options.location)
     mboxfiles = await locationProcessor.getMboxFiles()
     preplanner = {
@@ -52,14 +52,14 @@ async def asyncPreplanner(options):
     }
 
     LOG.info(f'Gathered {len(mboxfiles)} MBOX files')
-    LOG.info(f'Splitting {len(mboxfiles)} based on {options.pattern}')
+    LOG.info(f'Splitting {len(mboxfiles)} based on {options.folder_pattern}')
     for filename in mboxfiles:
         abs_filename = os.path.abspath(filename)
         root_file = abs_filename
-        path_count = abs_filename.count(options.pattern)
-        LOG.info(f"Pattern {options.pattern} found {path_count} in {root_file}")
+        path_count = abs_filename.count(options.folder_pattern)
+        LOG.info(f"Pattern {options.folder_pattern} found {path_count} in {root_file}")
         if path_count > 1:
-            root_file_loc = abs_filename.rfind(options.pattern)
+            root_file_loc = abs_filename.rfind(options.folder_pattern)
             root_file = abs_filename[root_file_loc:]
             LOG.info(f"Converted {abs_filename} to {root_file}")
         
@@ -75,7 +75,6 @@ async def asyncPreplanner(options):
             preplanner["planning"][root_file]["files"].append(abs_filename)
     LOG.info(f'Completed pre-planning')
     LOG.info(f'Found {len(preplanner["planning"])} unique sets')
-
     output_filename = get_output_filename()
     LOG.info(f'Writing preplan to {os.path.abspath(output_filename)}')
     with open(output_filename, "wt") as preplan_output:
@@ -86,3 +85,8 @@ async def asyncPreplanner(options):
             sort_keys=False,
         )
     LOG.info('Preplan complete')
+    return preplanner
+
+# wrap for the command-line
+async def asyncPreplanner(options):
+    await preplan(options)
