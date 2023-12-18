@@ -18,6 +18,7 @@ import datetime
 import hashlib
 import logging
 import math
+import sqlite3
 
 from tbdedup import (
     db,
@@ -27,11 +28,12 @@ from tbdedup import (
 LOG = logging.getLogger(__name__)
 
 async def processFile(filename, storage):
+    LOG.info(f'Processing file {filename}')
     box = mbox.Mailbox(None, filename)
 
     counter = 0
     try:
-        LOG.info(f'Processing records...')
+        LOG.info(f'{filename} Processing records...')
         for msg in box.buildSummary():
             storage.add_message(
                 msg.getHash(diskHash=False),  # hash for comparisons
@@ -45,24 +47,25 @@ async def processFile(filename, storage):
             )
             counter = counter + 1
             if math.fmod(counter, 10000) == 0:
-                LOG.info(f"Record Counter: {counter}")
+                LOG.info(f"{filename} Record Counter: {counter}")
 
     except mbox.ErrInvalidFileFormat as ex:
-        LOG.error(f'Invalid file format detected: {ex}')
+        LOG.error(f'{filename} Invalid file format detected: {ex}')
 
     else:
-        LOG.info(f"Detected {counter} messages in {filename}")
+        LOG.info(f"{filename} Detected {counter} messages in {filename}")
 
-async def dedupper(options):
+async def dedupper(options, mboxfiles):
     use_disk_data_for_hash = (
         True
         if options.msg_hash_source == 'disk'
         else False # `parsed`
     )
 
-    locationProcessor = mbox.MailboxFolder(options.location)
-    mboxfiles = await locationProcessor.getMboxFiles()
-    storage = db.MessageDatabase(options.hash_storage)
+    try:
+        storage = db.MessageDatabase(options.hash_storage)
+    except sqlite3.OperationalError:
+        storage = db.MessageDatabase(None)
 
     allFiles = '\n'.join(mboxfiles)
     LOG.info(f"Found {len(mboxfiles)} files to process:\n{allFiles}")
@@ -109,4 +112,6 @@ async def dedupper(options):
 
 # wrap for the command-line
 async def asyncDedup(options):
-    await dedupper(options)
+    locationProcessor = mbox.MailboxFolder(options.location)
+    mboxfiles = await locationProcessor.getMboxFiles()
+    await dedupper(options, mboxfiles)

@@ -13,10 +13,12 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-from . import (
-    dedup,
-    planner,
-)
 
-MessageDatabase = dedup.MessageDatabase
-PlannerDatabase = planner.PlannerDatabase
+import os
+import os.path
+
+
+def clean_workspace(options):
+    # 1. Add the files and folders into the output JSON file
+    # 2. process the output JSON file to clean them up
+    pass

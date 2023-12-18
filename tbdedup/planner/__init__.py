@@ -28,6 +28,17 @@ from tbdedup import (
 
 LOG = logging.getLogger(__name__)
 
+counter_key = "counter"
+map_file_key = "mapping"
+file_map_key = "file_map"
+location_key = "location"
+output_key = "output"
+pattern_key = "pattern"
+source_key = "source"
+
+class GenerationError(Exception):
+    pass
+
 def get_output_directory():
     counter = 0
     while True:
@@ -46,10 +57,49 @@ def get_output_directory():
         else:
             return output_directory
 
-async def planner(options):
-    locationProcessor = mbox.MailboxFolder(options.location)
-    mboxfiles = await locationProcessor.getMboxFiles()
+async def generate(output_directory, matched_files, file_mapping):
+    file_counter = 1
+    LOG.info(f'Attempting to map out {len(matched_files)} into {output_directory}')
+    LOG.info(f'Files: {matched_files}')
+    for filename in matched_files:
+        link_file = f"{file_counter:06}.mbox"
+        link_name = os.path.join(
+            output_directory,
+            link_file,
+        )
+        source_path = os.path.abspath(filename)
+        LOG.info(f'Mapping {source_path} to {link_name}')
+        try:
+            # only symlinking files
+            os.symlink(
+                source_path,
+                link_name,
+                target_is_directory=False,
+                dir_fd=None,
+            )
+        except Exception as ex:
+            LOG.exception(f'Failed to symlink file {source_path} as {link_name}')
+            raise GenerationError(f'Failed to symlink file {source_path} as {link_name}') from ex
+        file_counter = file_counter + 1
+        file_mapping[file_map_key][link_file] = source_path
 
+
+    mapping_file = os.path.join(
+        output_directory,
+        "mapping.json",
+    )
+    file_mapping[counter_key] = file_counter
+    file_mapping[map_file_key] = mapping_file
+    with open(mapping_file, "wt") as file_mapper:
+        json.dump(
+            file_mapping,
+            file_mapper,
+            indent=4,
+            sort_keys=False,
+        )
+    return mapping_file
+
+async def planner(options, mboxfiles):
     try:
         pattern = (
             re.compile(options.limit_pattern)
@@ -74,52 +124,22 @@ async def planner(options):
     LOG.info(f"Linking to MBOX files to {output_directory}")
 
     file_mapping = {
-        "pattern": options.limit_pattern,
-        "location": {
-            "source": options.location,
-            "output": output_directory,
+        pattern_key: options.limit_pattern,
+        location_key: {
+            source_key: options.location,
+            output_key: output_directory,
         },
-        "file_map": {},
+        file_map_key: {},
     }
-    file_counter = 0
-    for filename in matched_files:
-        link_file = f"{file_counter:06}.mbox"
-        link_name = os.path.join(
-            output_directory,
-            link_file,
-        )
-        source_path = os.path.abspath(filename)
-        try:
-            # only symlinking files
-            os.symlink(
-                source_path,
-                link_name,
-                target_is_directory=False,
-                dir_fd=None,
-            )
-            LOG.info(f'Mapping {source_path} to {link_name}')
-        except Exception:
-            LOG.exception(f'Failed to symlink file {source_path} as {link_name}')
-            return 2
-
-        file_mapping["file_map"][link_file] = source_path
-
-        file_counter = file_counter + 1
-
-    mapping_file = os.path.join(
-        output_directory,
-        "mapping.json",
-    )
-    with open(mapping_file, "wt") as file_mapper:
-        json.dump(
-            file_mapping,
-            file_mapper,
-            indent=4,
-            sort_keys=False,
-        )
+    try:
+        mapping_file = await generate(output_directory, matched_files, file_mapping)
+    except:
+        pass
 
     return (output_directory, mapping_file)
 
 # wrap for the command-line
 async def asyncPlanner(options):
-    await planner(options)
+    locationProcessor = mbox.MailboxFolder(options.location)
+    mboxfiles = await locationProcessor.getMboxFiles()
+    await planner(options, mboxfiles)

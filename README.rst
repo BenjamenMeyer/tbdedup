@@ -98,6 +98,12 @@ This will put `tbdedup` into your environment based on your installation method.
 
 .. note:: PyPi likely also can install directly from Git without having to check it out first.
 
+Operations
+----------
+
+`tbdedup` can be run in a few different manners. It can be run run on each individual stage
+or all together. The section below outline each method.
+
 Running the Preplanner
 ----------------------
 
@@ -123,7 +129,7 @@ Running the Planner
 
 `tbdedup` provides a planner capability that will search a path and symlink files into a path
 that can then be processed by the `dedup` functionality. This is useful for deduping multiple
-locations in a Thunderbird Profile that have folders that can be pattern matched while ignoring
+locations in a Thunderbird Profile that have folders that can be pattern matched while ignoringG
 other folders.
 
 The planner will first build a listing of MBOX files. It will then create a timestamped folder
@@ -174,3 +180,19 @@ Thunderbird profile.
 .. note:: I also found https://github.com/lenlo/mailcheck as a useful tool. It does offer dedup
    support; but it also seems to find issues with the length of the messages as stored by
    Thunderbird. Still it can provide a useful check that the output file is a valid MBOX file.
+
+Running it all together
+-----------------------
+
+`tbdedup` provides the ability to run it all together. All the options available above are provided so they
+can be appropriately applied. The functionality is basically the preplanner set to drive the planner,
+which in turn drives the deduplicator.
+
+.. note:: Running it all together may take a long time. Run-time will be based on the largest
+   data set that is being processed, and the quantity of data sets being processed.
+
+Example: 
+
+.. code-block:: shell
+
+    $ tb-dedup do --location ~/.thunderbird/dm8a9v53.default/Mail/Local\ Folders/Inbox.sbd/

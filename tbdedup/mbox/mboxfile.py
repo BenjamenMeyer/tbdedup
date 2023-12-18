@@ -122,12 +122,12 @@ class Mailbox(object):
         with open(filename, 'rb') as data_input:
             matches = []
             offset = 0
-            #re = 
+            #re =
             foundBlankLine = False
             inRecord = False
             recordCounter = 0
             currentRecord = mboxmessage.Message(0, "")
-            
+
             for line in data_input:
                 line = line.decode('latin1').strip()
                 if len(line) == 0:
@@ -224,7 +224,7 @@ class Mailbox(object):
                 isHeaderLine = self.mboxHeaderStart.match(rawline2)
 
                 if recordIndex == 0:
-                    if not isStartLine: 
+                    if not isStartLine:
                         # start line does not match properly
                         raise ErrInvalidFileFormat(f"invalid start line: {line}")
 
@@ -279,7 +279,7 @@ class Mailbox(object):
                     if header_name.lower() == "content-length":
                         #log_file_tracking(f'Found Content Length: {header_name}: "{currentRecord.getData(header_name)}"', previous_file_location, file_location)
                         currentRecord.setContentLength(header_data)
-                
+
                 elif line == record_boundary_marker:
                     foundBlankLine = False
                     #log_file_tracking(f'Found Content Boundary Marker - {record_boundary_marker}', previous_file_location, file_location)

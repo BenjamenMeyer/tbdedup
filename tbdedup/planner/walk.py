@@ -27,6 +27,10 @@ from tbdedup import (
 
 LOG = logging.getLogger(__name__)
 
+location_key = "location"
+preplanner_key = "pre_planning"
+preplanner_files_key = "files"
+
 def get_output_filename():
     counter = 0
     while True:
@@ -43,38 +47,50 @@ def get_output_filename():
         else:
             return output_filename
 
-async def preplan(options):
-    locationProcessor = mbox.MailboxFolder(options.location)
-    mboxfiles = await locationProcessor.getMboxFiles()
+async def preplan(options, mboxfiles, files_db):
+
     preplanner = {
-        "location": options.location,
-        "planning": {},
+        location_key: options.location,
+        preplanner_key: {},
     }
 
     LOG.info(f'Gathered {len(mboxfiles)} MBOX files')
     LOG.info(f'Splitting {len(mboxfiles)} based on {options.folder_pattern}')
     for filename in mboxfiles:
+        # get the absolute path of the file
         abs_filename = os.path.abspath(filename)
-        root_file = abs_filename
+
+        # start with assuming that the file is the root file
+        # root_file = abs_filename
+
+        # get a count of how many times the folder pattern appears in the absolute path
         path_count = abs_filename.count(options.folder_pattern)
-        LOG.info(f"Pattern {options.folder_pattern} found {path_count} in {root_file}")
-        if path_count > 1:
-            root_file_loc = abs_filename.rfind(options.folder_pattern)
-            root_file = abs_filename[root_file_loc:]
-            LOG.info(f"Converted {abs_filename} to {root_file}")
-        
-        if root_file not in preplanner["planning"]:
+        LOG.info(f"Pattern {options.folder_pattern} found {path_count} in {abs_filename}")
+
+        # if the pattern occurs more than once then it is not the root file
+        #if path_count > 1:
+        # find the last section that can be used
+        root_file_loc = abs_filename.rfind(options.folder_pattern)
+        root_file = abs_filename[root_file_loc:]
+        LOG.info(f"Converted {abs_filename} to {root_file}")
+
+        #if not files_db.has_file(abs_filename):
+        #    files_db.add_file(filename, abs_filename)
+        #    # Start Plan for root file
+
+        if root_file not in preplanner[preplanner_key]:
             LOG.info(f'Found root {root_file}')
-            preplanner["planning"][root_file] = {
-                "location": options.location,
-                "files": [
+            preplanner[preplanner_key][root_file] = {
+                location_key: options.location,
+                preplanner_files_key: [
                     abs_filename,
                 ],
             }
         else:
-            preplanner["planning"][root_file]["files"].append(abs_filename)
+            preplanner[preplanner_key][root_file][preplanner_files_key].append(abs_filename)
+
     LOG.info(f'Completed pre-planning')
-    LOG.info(f'Found {len(preplanner["planning"])} unique sets')
+    LOG.info(f'Found {len(preplanner[preplanner_key])} unique sets')
     output_filename = get_output_filename()
     LOG.info(f'Writing preplan to {os.path.abspath(output_filename)}')
     with open(output_filename, "wt") as preplan_output:
@@ -89,4 +105,6 @@ async def preplan(options):
 
 # wrap for the command-line
 async def asyncPreplanner(options):
-    await preplan(options)
+    locationProcessor = mbox.MailboxFolder(options.location)
+    mboxfiles = await locationProcessor.getMboxFiles()
+    await preplan(options, mboxfiles)
