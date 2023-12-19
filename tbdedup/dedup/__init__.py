@@ -26,6 +26,17 @@ from tbdedup import (
 
 LOG = logging.getLogger(__name__)
 
+def source_option_to_boolean(msg_hash_source):
+    # NOTE: in testing found that `msg_hash_source == 'disk'` results
+    #   in twice as many files as `msg_hash_source == 'parsed'` with
+    #   the difference between deplicates. Thus the parameter value defaults
+    #   to False as it yields better results
+    return (
+        True
+        if msg_hash_source == 'disk'
+        else False # `parsed`
+    )
+
 async def processFile(filename, storage):
     box = mbox.Mailbox(None, filename)
 
@@ -53,16 +64,13 @@ async def processFile(filename, storage):
     else:
         LOG.info(f"Detected {counter} messages in {filename}")
 
-async def dedupper(options):
-    use_disk_data_for_hash = (
-        True
-        if options.msg_hash_source == 'disk'
-        else False # `parsed`
-    )
+async def dedupper(mboxfiles, msg_hash_storage_location, use_disk_data_for_hash=False, output_base_path=None):
+    # NOTE: in testing found that `use_disk_data_for_hash == True` results
+    #   in twice as many files as `use_disk_data_for_hash == False` with
+    #   the difference between deplicates. Thus the parameter value defaults
+    #   to False as it yields better results
 
-    locationProcessor = mbox.MailboxFolder(options.location)
-    mboxfiles = await locationProcessor.getMboxFiles()
-    storage = db.MessageDatabase(options.hash_storage)
+    storage = db.MessageDatabase(msg_hash_storage_location)
 
     allFiles = '\n'.join(mboxfiles)
     LOG.info(f"Found {len(mboxfiles)} files to process:\n{allFiles}")
@@ -80,7 +88,16 @@ async def dedupper(options):
         LOG.info(f"** WARNING ** Hash Source Choice may result in different output results -- Using {'DISK' if use_disk_data_for_hash else 'PARSED'}")
 
     utc_time = datetime.datetime.utcnow()
-    output_filename = utc_time.strftime("%Y%m%d_%H%M%S_deduplicated.mbox")
+    output_filename_timestamp = utc_time.strftime("%Y%m%d_%H%M%S_deduplicated.mbox")
+
+    output_filename = (
+        output_filename_timestamp
+        if output_base_path is not None
+        else os.path.join(
+            output_base_path,
+            output_filename_timestamp,
+        )
+    )
     LOG.info(f"Writing unique records to {output_filename}")
     with open(output_filename, "wb") as output_data:
         wcounter = 0
@@ -105,8 +122,15 @@ async def dedupper(options):
 
             wcounter = wcounter + 1
     LOG.info(f'Wrote {wcounter} records')
+    # possible optimization:
+    #storage.close()
     return output_filename
 
 # wrap for the command-line
 async def asyncDedup(options):
-    await dedupper(options)
+    locationProcessor = mbox.MailboxFolder(options.location)
+    mboxfiles = await locationProcessor.getMboxFiles()
+    use_disk_data_for_hash = source_option_to_boolean(
+        options.msg_hash_source
+    )
+    await dedupper(mboxfiles, options.hash_storage, use_disk_data_for_hash)

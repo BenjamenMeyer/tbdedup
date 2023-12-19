@@ -19,15 +19,16 @@ import logging
 import sys
 
 from tbdedup import (
+    combinatory,
     dedup,
-    planner,
 )
-from tbdedup.planner import walk as planner_walk
+from tbdedup.planner import (
+    plan as planner_plan,
+    walk as planner_walk,
+)
 
 LOG = logging.getLogger(__name__)
 
-async def combinatory(options):
-    pass
 
 async def asyncMain():
     argument_parser = argparse.ArgumentParser(
@@ -82,7 +83,7 @@ async def asyncMain():
         required=False,
         help="Pattern to limit the files to if provided",
     )
-    planner_parser.set_defaults(func=planner.asyncPlanner)
+    planner_parser.set_defaults(func=planner_plan.asyncPlanner)
 
     preplanner_parser = subparsers.add_parser('preplanner')
     preplanner_parser.add_argument(
@@ -111,6 +112,13 @@ async def asyncMain():
         help='Directory to search for Thunderbird MBox Files',
     )
     combinatory_parser.add_argument(
+        '--storage-location', '-sl',
+        default=None,
+        type=str,
+        required=False,
+        help='Directory location to use for storage while processing',
+    )
+    combinatory_parser.add_argument(
         '--hash-storage', '-hs',
         default=None,
         type=str,
@@ -137,8 +145,7 @@ async def asyncMain():
         required=False,
         help="Pattern to limit the files to if provided",
     )
-    combinatory_parser.set_defaults(func=combinatory)
-    
+    combinatory_parser.set_defaults(func=combinatory.asyncCombinatory)
 
     arguments = argument_parser.parse_args()
     # log config is optional
