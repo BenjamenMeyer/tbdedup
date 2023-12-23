@@ -18,10 +18,16 @@ import datetime
 import hashlib
 import logging
 import math
+import os.path
 
 from tbdedup import (
     db,
     mbox,
+)
+
+from tbdedup.utils import (
+    encoder,
+    time,
 )
 
 LOG = logging.getLogger(__name__)
@@ -37,32 +43,39 @@ def source_option_to_boolean(msg_hash_source):
         else False # `parsed`
     )
 
-async def processFile(filename, storage):
+async def processFile(filename, storage, counter_update=None):
     box = mbox.Mailbox(None, filename)
 
     counter = 0
     try:
         LOG.info(f'Processing records...')
         for msg in box.buildSummary():
-            storage.add_message(
-                msg.getHash(diskHash=False),  # hash for comparisons
-                msg.getMsgId(), # id
-                filename, # location
-                msg.getMessageIDHeader(), # 2nd id from the headers
-                msg.getMessageIDHeaderHash(), # 2nd hash
-                msg.start_offset,
-                msg.end_offset,
-                msg.getHash(diskHash=True), # hash to ensure we read the right thing
-            )
-            counter = counter + 1
-            if math.fmod(counter, 10000) == 0:
-                LOG.info(f"Record Counter: {counter}")
+            try:
+                storage.add_message(
+                    msg.getHash(diskHash=False),  # hash for comparisons
+                    msg.getMsgId(), # id
+                    filename, # location
+                    msg.getMessageIDHeader(), # 2nd id from the headers
+                    msg.getMessageIDHeaderHash(), # 2nd hash
+                    msg.start_offset,
+                    msg.end_offset,
+                    msg.getHash(diskHash=True), # hash to ensure we read the right thing
+                )
+                counter = counter + 1
+                if math.fmod(counter, 10000) == 0:
+                    LOG.info(f"Record Counter: {counter}")
+            except Exception:
+                LOG.exception(f'File: {filename} - Message ID: {msg.getMsgId()} - Start: {msg.start_offset} - End: {msg.end_offset}')
+                raise
 
     except mbox.ErrInvalidFileFormat as ex:
         LOG.error(f'Invalid file format detected: {ex}')
 
     else:
         LOG.info(f"Detected {counter} messages in {filename}")
+
+    if counter_update is not None:
+        counter_update()
 
 async def dedupper(mboxfiles, msg_hash_storage_location, use_disk_data_for_hash=False, output_base_path=None):
     # NOTE: in testing found that `use_disk_data_for_hash == True` results
@@ -72,14 +85,29 @@ async def dedupper(mboxfiles, msg_hash_storage_location, use_disk_data_for_hash=
 
     storage = db.MessageDatabase(msg_hash_storage_location)
 
+    counters = {
+        "completed": 0.0,
+        "total": 0.0,
+    }
+    def counter_update():
+        counters['completed'] = counters['completed'] + 1.0
+        if counters['total'] > 0:
+            percentage = counters['completed'] /counters['total'] * 100.0
+            msg = (
+                f'[{output_base_path}] ' if output_base_path is not None else ''
+            )
+            msg = msg + f'Progress Report: {percentage:03.02f}'
+            LOG.info(msg)
+
     allFiles = '\n'.join(mboxfiles)
     LOG.info(f"Found {len(mboxfiles)} files to process:\n{allFiles}")
     file_tasks = []
     for filename in mboxfiles:
         file_task = asyncio.create_task(
-            processFile(filename, storage),
+            processFile(filename, storage, counter_update=counter_update),
         )
         file_tasks.append(file_task)
+    counters['total'] = len(file_tasks)
 
     file_results = await asyncio.gather(*file_tasks)
     LOG.info(f"[DISK  ] Detected {storage.get_unique_message_count(use_disk=True)} unique records")
@@ -105,7 +133,7 @@ async def dedupper(mboxfiles, msg_hash_storage_location, use_disk_data_for_hash=
             for msg_for_hash in storage.get_messages_by_hash(unique_hashid, use_disk=use_disk_data_for_hash):
                 msgData = mbox.Mailbox.getMessageFromFile(msg_for_hash)
                 msgDataHasher = hashlib.sha256()
-                msgDataHasher.update(msgData)
+                msgDataHasher.update(encoder.to_encoding(msgData))
                 msgDataHash = msgDataHasher.hexdigest()
                 if msgDataHash != msg_for_hash['disk_hash']:
                     LOG.info(f'Unable to rebuild message with hash {unique_hashid} - got {msgDataHash} - {msgData}')
@@ -122,15 +150,19 @@ async def dedupper(mboxfiles, msg_hash_storage_location, use_disk_data_for_hash=
 
             wcounter = wcounter + 1
     LOG.info(f'Wrote {wcounter} records')
-    # possible optimization:
-    #storage.close()
+    # close the database and free up some memory
+    # it's not sent any where else so it can be safely closed now
+    storage.close()
     return output_filename
 
 # wrap for the command-line
 async def asyncDedup(options):
     locationProcessor = mbox.MailboxFolder(options.location)
-    mboxfiles = await locationProcessor.getMboxFiles()
+    with time.TimeTracker("File Search"):
+        mboxfiles = await locationProcessor.getMboxFiles()
     use_disk_data_for_hash = source_option_to_boolean(
         options.msg_hash_source
     )
-    await dedupper(mboxfiles, options.hash_storage, use_disk_data_for_hash)
+
+    with time.TimeTracker("Deduplicator"):
+        await dedupper(mboxfiles, options.hash_storage, use_disk_data_for_hash)

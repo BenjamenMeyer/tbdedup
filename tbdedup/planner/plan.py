@@ -15,7 +15,6 @@ limitations under the License.
 """
 import asyncio
 import datetime
-import hashlib
 import json
 import logging
 import os
@@ -28,6 +27,9 @@ from tbdedup import (
 from . import (
     keys,
     output,
+)
+from tbdedup.utils import (
+    time,
 )
 
 LOG = logging.getLogger(__name__)
@@ -121,5 +123,7 @@ async def planner(options, mboxfiles):
 # wrap for the command-line
 async def asyncPlanner(options):
     locationProcessor = mbox.MailboxFolder(options.location)
-    mboxfiles = await locationProcessor.getMboxFiles()
-    await planner(options, mboxfiles)
+    with time.TimeTracker("File Search"):
+        mboxfiles = await locationProcessor.getMboxFiles()
+    with time.TimeTracker("Planner"):
+        await planner(options, mboxfiles)

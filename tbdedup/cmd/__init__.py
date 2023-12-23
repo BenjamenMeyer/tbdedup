@@ -163,7 +163,12 @@ async def asyncMain():
         log.addHandler(lf)
         log.setLevel(logging.DEBUG)
 
-    result = await arguments.func(arguments)
+    try:
+        result = await arguments.func(arguments)
+    except Exception:
+        LOG.exception('Error during processing')
+        result = -1
+
     if result is not None:
         return result
     else:

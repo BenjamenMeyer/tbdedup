@@ -15,6 +15,7 @@ limitations under the License.
 """
 import asyncio
 import datetime
+import json
 import logging
 import os
 import os.path
@@ -31,16 +32,29 @@ from tbdedup.planner import (
     plan as planner_plan,
     walk as planner_walk,
 )
+from tbdedup.utils import (
+    time,
+)
 
 LOG = logging.getLogger(__name__)
 
-async def runDedup(output_directory, plan, dedup_task):
-    output_file = await dedup_task
-    return (
-        output_directory,
-        plan,
-        output_file,
-    )
+async def runDedup(output_directory, plan, dedup_task, counter_update=None):
+    try:
+        output_file = await dedup_task
+        if counter_update is not None:
+            counter_update()
+        return (
+            output_directory,
+            plan,
+            output_file,
+        )
+    except Exception:
+        LOG.exception(f'Failed while carrying out plan for {run.location}')
+        return (
+            output_directory,
+            plan,
+            None,
+        )
 
 def get_plan_output_directory(folder_pattern, temp_directory, root_file):
     path_loc = root_file.rfind(folder_pattern)
@@ -54,7 +68,8 @@ def get_plan_output_directory(folder_pattern, temp_directory, root_file):
 async def combinatory(options, mboxfiles):
     # 1. Run the preplanner and find all the sets of files to deduplicate
     preplan = planner_walk.Preplanner(options)
-    await preplan.preplan(mboxfiles)
+    with time.TimeTracker("Preplanner"):
+        await preplan.preplan(mboxfiles)
 
     if preplan.plan_count() == 0:
         LOG.info('No data for deduplication')
@@ -76,71 +91,88 @@ async def combinatory(options, mboxfiles):
 
     required_file_count = 0
 
-    for root_file, plan in preplan.plans():
-        output_directory = get_plan_output_directory(
-            options.folder_pattern,
-            temp_directory,
-            root_file,
-        )
-        # ensure the directory tree exists
-        os.makedirs(output_directory, mode=0o755, exist_ok=True)
+    counters = {
+        "completed": 0.0,
+        "total": 0.0,
+    }
+    def counter_update():
+        counters['completed'] = counters['completed'] + 1.0
+        if counters['total'] > 0:
+            percentage = counters['completed'] /counters['total'] * 100.0
+            LOG.info(f'[Combinatory] Progress Report: {percentage:03.02f}')
 
-        plan.combinatory = {
-            planner_keys.plan_pattern: options.limit_pattern,
-            planner_keys.plan_location: {
-                planner_keys.plan_source: root_file,
-                planner_keys.plan_output: output_directory,
-            },
-            planner_keys.plan_file_map: {},
-        }
-
-        try:
-            mapping_file = await planner_plan.generate(
-                output_directory,
-                plan.files,
-                plan.combinatory,
+    with time.TimeTracker("Planning"):
+        for root_file, plan in preplan.plans():
+            output_directory = get_plan_output_directory(
+                options.folder_pattern,
+                temp_directory,
+                root_file,
             )
-        except planner_plan.GenerationError:
-            LOG.exception(f'Failed to generate data in {output_directory}')
-            return
+            # ensure the directory tree exists
+            os.makedirs(output_directory, mode=0o755, exist_ok=True)
 
-        # plan.combinatory[planner_keys.plan_file_map].keys() == symlinks
-        # plan.combinatory[planner_keys.plan_map_file] = mapping.json file
-        # increase required files:
-        #   - output MBOX file
-        #   - input SqliteDB
-        #   - reporting
-        #   - number of links in the data set
-        required_file_count = 3 + plan.combinatory[planner_keys.plan_counter]
+            plan.combinatory = {
+                planner_keys.plan_pattern: options.limit_pattern,
+                planner_keys.plan_location: {
+                    planner_keys.plan_source: root_file,
+                    planner_keys.plan_output: output_directory,
+                },
+                planner_keys.plan_file_map: {},
+            }
 
-        # 4. Split out a async worker for each directory to deduplicate
-        #    each directory data set
-        dedup_hash_storage = os.path.join(
-            output_directory,
-            "hash.sqlite",
-        )
-        use_disk_data_for_hash = dedup.source_option_to_boolean(
-            options.msg_hash_source
-        )
-        dedup_task = asyncio.create_task(
-            runDedup(
+            try:
+                mapping_file = await planner_plan.generate(
+                    output_directory,
+                    plan.files,
+                    plan.combinatory,
+                )
+            except planner_plan.GenerationError:
+                LOG.exception(f'Failed to generate data in {output_directory}')
+                return
+
+            # plan.combinatory[planner_keys.plan_file_map].keys() == symlinks
+            # plan.combinatory[planner_keys.plan_map_file] = mapping.json file
+            # increase required files:
+            #   - output MBOX file
+            #   - input SqliteDB
+            #   - reporting
+            #   - number of links in the data set
+            required_file_count = 3 + plan.combinatory[planner_keys.plan_counter]
+
+            # 4. Split out a async worker for each directory to deduplicate
+            #    each directory data set
+            dedup_hash_storage = os.path.join(
                 output_directory,
-                plan,
-                dedup.dedupper(
-                    # convert the link paths from just filenames to full paths
-                    [
-                        os.path.join(
-                            plan.combinatory[planner_keys.plan_location][planner_keys.plan_output],
-                            link_file,
-                        )
-                        for link_file in plan.combinatory[planner_keys.plan_file_map].keys()
-                    ],
-                    dedup_hash_storage,
-                    use_disk_data_for_hash=use_disk_data_for_hash,
-                ),
+                "hash.sqlite",
             )
-        )
-        dedup_workers.append(dedup_task)
+            use_disk_data_for_hash = dedup.source_option_to_boolean(
+                options.msg_hash_source
+            )
+            dedup_task = asyncio.create_task(
+                runDedup(
+                    output_directory,
+                    plan,
+                    dedup.dedupper(
+                        # convert the link paths from just filenames to full paths
+                        [
+                            os.path.join(
+                                plan.combinatory[planner_keys.plan_location][planner_keys.plan_output],
+                                link_file,
+                            )
+                            for link_file in plan.combinatory[planner_keys.plan_file_map].keys()
+                        ],
+                        dedup_hash_storage,
+                        use_disk_data_for_hash=use_disk_data_for_hash,
+                        output_base_path=plan.combinatory[planner_keys.plan_location][planner_keys.plan_output],
+                    ),
+                    counter_update=counter_update,
+                )
+            )
+            dedup_workers.append(dedup_task)
+
+    counters['total'] = len(dedup_workers)
+    counters['completed'] = -1.0
+    counter_update()
 
     # Ensure there are enough file handles to support the work
     soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
@@ -166,7 +198,8 @@ async def combinatory(options, mboxfiles):
         return
 
     LOG.info(f'Waiting on {len(dedup_workers)} dedup tasks to complete')
-    worker_results = await asyncio.gather(*dedup_workers)
+    with time.TimeTracker("Deduplicator"):
+        worker_results = await asyncio.gather(*dedup_workers)
     LOG.info('Dedup Workers completed')
 
     # 5. Move result files back into the original data set with the
@@ -187,10 +220,28 @@ async def combinatory(options, mboxfiles):
         move_workers.append(move_task)
 
     LOG.info(f'Waiting on {len(move_workers)} to move the files')
-    move_worker_results = await asyncio.gather(*move_workers)
+    with time.TimeTracker("Mover"):
+        move_worker_results = await asyncio.gather(*move_workers)
     LOG.info('Move Workers completed')
+
+    # finally write the completed operation under the output directory
+    data_output_file = os.path.join(
+        temp_directory
+        if options.storage_location is None
+        else options.storage_location,
+        "combinatory_operation.json",
+    )
+    with open(data_output_file, "wt") as combinatory_output:
+        json.dump(
+            preplan, # now holds everything about the entire run
+            combinatory_output,
+            indent=4,
+            sort_keys=False,
+        )
 
 async def asyncCombinatory(options):
     locationProcessor = mbox.MailboxFolder(options.location)
-    mboxfiles = await locationProcessor.getMboxFiles()
-    await combinatory(options, mboxfiles)
+    with time.TimeTracker("File Search"):
+        mboxfiles = await locationProcessor.getMboxFiles()
+    with time.TimeTracker("Full Operation"):
+        await combinatory(options, mboxfiles)

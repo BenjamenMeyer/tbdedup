@@ -18,9 +18,7 @@ import mailbox # builtin
 import re
 import logging
 
-#from tbdedup import (
-#    utils,
-#)
+from tbdedup.utils import encoder
 
 LOG = logging.getLogger(__name__)
 
@@ -96,7 +94,7 @@ class Message(object):
         mhash = hashlib.sha256()
         if diskHash:
             for rl in self.rawLines:
-                mhash.update(rl)
+                mhash.update(encoder.to_encoding(rl))
         else:
             skip_keys = [
                 'X-Mozilla-Status',
@@ -114,9 +112,9 @@ class Message(object):
                     if m.match(k):
                         continue
                 for vline in v:
-                    mhash.update(vline)
+                    mhash.update(encoder.to_encoding(vline))
             for l in self.lines:
-                mhash.update(l)
+                mhash.update(encoder.to_encoding(l))
 
         return mhash.hexdigest()
 
@@ -132,10 +130,5 @@ class Message(object):
     def getMessageIDHeaderHash(self):
         idHeader = self.getMessageIDHeader()
         m = hashlib.sha256()
-        if type(idHeader) == bytes:
-            m.update(idHeader)
-        elif type(idHeader) == str:
-            m.update(bytes(idHeader, 'utf-8'))
-        else:
-            m.update(bytes(str(idHeader), 'utf-8'))
+        m.update(encoder.to_encoding(idHeader))
         return m.hexdigest()

@@ -13,4 +13,15 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-from .insensitiveDict import *
+
+def to_encoding(value):
+    valueType = type(value)
+
+    if valueType == bytes:
+        return value
+
+    elif valueType == str:
+        return bytes(value, 'utf-8')
+
+    else:
+        return bytes(str(value), 'utf-8') 

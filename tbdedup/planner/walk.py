@@ -28,6 +28,9 @@ from . import (
     keys,
     output,
 )
+from tbdedup.utils import (
+    time,
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -121,6 +124,8 @@ class Preplanner(object):
 # wrap for the command-line
 async def asyncPreplanner(options):
     locationProcessor = mbox.MailboxFolder(options.location)
-    mboxfiles = await locationProcessor.getMboxFiles()
+    with time.TimeTracker("File Search"):
+        mboxfiles = await locationProcessor.getMboxFiles()
     preplan = Preplanner(options)
-    await preplan.preplan(mboxfiles)
+    with time.TimeTracker("Preplanner"):
+        await preplan.preplan(mboxfiles)
