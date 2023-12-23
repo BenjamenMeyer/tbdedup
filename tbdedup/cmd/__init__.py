@@ -31,6 +31,8 @@ LOG = logging.getLogger(__name__)
 
 
 async def asyncMain():
+    message_hash_source_choices = ['disk', 'parsed']
+
     argument_parser = argparse.ArgumentParser(
         description="Thunderbird MBox Deduplicator"
     )
@@ -61,7 +63,7 @@ async def asyncMain():
     )
     dedup_parser.add_argument(
         '--msg-hash-source',
-        choices=['disk','parsed'],
+        choices=message_hash_source_choices,
         help='Specify which source to use for the hash. `disk` means using the raw message off the disk. `parsed` means using everything but the MBOX FROM line that identifies the message',
         default='parsed',
     )
@@ -127,7 +129,7 @@ async def asyncMain():
     )
     combinatory_parser.add_argument(
         '--msg-hash-source',
-        choices=['disk','parsed'],
+        choices=message_hash_source_choices,
         help='Specify which source to use for the hash. `disk` means using the raw message off the disk. `parsed` means using everything but the MBOX FROM line that identifies the message',
         default='parsed',
     )
@@ -174,9 +176,11 @@ async def asyncMain():
     else:
         return 0
 
+
 # main is a simple wrapper for the setup's console_script
 def main():
     asyncio.run(asyncMain())
+
 
 if __name__ == "__main__":
     sys.exit(main)

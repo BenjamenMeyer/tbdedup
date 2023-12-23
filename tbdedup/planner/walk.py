@@ -34,6 +34,7 @@ from tbdedup.utils import (
 
 LOG = logging.getLogger(__name__)
 
+
 class PreplannerFileManager(object):
 
     def __init__(self, location):
@@ -46,10 +47,11 @@ class PreplannerFileManager(object):
 
     def __json__(self):
         return {
-                "location": self.location,
-                "files": self.files,
-                "combinatory": self.combinatory,
+            "location": self.location,
+            "files": self.files,
+            "combinatory": self.combinatory,
         }
+
 
 class Preplanner(object):
 
@@ -120,6 +122,7 @@ class Preplanner(object):
     def plans(self):
         for root_file, plan in self.preplanner[keys.preplan_planning].items():
             yield (root_file, plan)
+
 
 # wrap for the command-line
 async def asyncPreplanner(options):

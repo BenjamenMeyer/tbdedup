@@ -34,8 +34,10 @@ from tbdedup.utils import (
 
 LOG = logging.getLogger(__name__)
 
+
 class GenerationError(Exception):
     pass
+
 
 async def generate(output_directory, matched_files, file_mapping):
     file_counter = 1
@@ -79,6 +81,7 @@ async def generate(output_directory, matched_files, file_mapping):
             sort_keys=False,
         )
 
+
 async def planner(options, mboxfiles):
     try:
         pattern = (
@@ -114,11 +117,12 @@ async def planner(options, mboxfiles):
 
     try:
         mapping_file = await generate(output_directory, matched_files, file_mapping)
-    except:
+    except Exception:
         LOG.exception('Error during file linkage')
         mapping_file = None
 
     return (output_directory, mapping_file)
+
 
 # wrap for the command-line
 async def asyncPlanner(options):

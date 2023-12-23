@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+
 def to_encoding(value):
     valueType = type(value)
 
@@ -24,4 +25,4 @@ def to_encoding(value):
         return bytes(value, 'utf-8')
 
     else:
-        return bytes(str(value), 'utf-8') 
+        return bytes(str(value), 'utf-8')

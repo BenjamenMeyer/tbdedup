@@ -35,7 +35,7 @@ setup(
             'tb-dedup=tbdedup.cmd:main',
         ],
     },
-    test_suite='thunderbirddedup',
+    test_suite='tbdedup',
     packages=find_packages(exclude=['tests*', 'tbdedup/tests']),
     zip_safe=True,
     classifiers=[

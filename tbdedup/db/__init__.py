@@ -45,41 +45,59 @@ SCHEMAS = [
 ]
 
 ADD_SCHEMA_VERSION = """
-INSERT INTO schema_version (version) VALUES(:version)
+INSERT INTO schema_version (version)
+VALUES(:version)
 """
 
 GET_SCHEMA_VERSION = """
-SELECT MAX(version) FROM schema_version
+SELECT MAX(version)
+FROM schema_version
 """
 
 
 ADD_MESSAGE = """
-INSERT INTO messages(hashid, diskhashid, messageid, messageid2, hashid2, location, startOffset, endOffset)  VALUES(:hashid, :diskhashid, :messageid, :messageid2, :hashid2, :location, :startOffset, :endOffset)
+INSERT INTO messages(hashid, diskhashid, messageid, messageid2, hashid2, location, startOffset, endOffset)
+VALUES(:hashid, :diskhashid, :messageid, :messageid2, :hashid2, :location, :startOffset, :endOffset)
 """
 
 DISK_GET_UNIQUE_MESSAGE_COUNT = """
-SELECT COUNT(*) FROM (SELECT DISTINCT diskhashid FROM messages)
+SELECT COUNT(*)
+FROM (
+    SELECT DISTINCT diskhashid
+    FROM messages
+)
 """
 
 DISK_GET_MESSAGE_HASHES = """
-SELECT DISTINCT diskhashid FROM messages
+SELECT DISTINCT diskhashid
+FROM messages
 """
 
 DISK_GET_MESSAGES_BY_HASH = """
-SELECT messageid, location, startOffset, endOffset, diskhashid FROM messages WHERE diskhashid = :diskhashid
+SELECT messageid, location, startOffset, endOffset, diskhashid
+FROM messages
+WHERE diskhashid = :diskhashid
 """
 
 GET_UNIQUE_MESSAGE_COUNT = """
-SELECT COUNT(*) FROM (SELECT DISTINCT hashid FROM messages)
+SELECT COUNT(*)
+FROM (
+    SELECT DISTINCT hashid
+    FROM messages
+)
 """
 
 GET_MESSAGE_HASHES = """
-SELECT DISTINCT hashid FROM messages
+SELECT DISTINCT hashid
+FROM messages
 """
 
 GET_MESSAGES_BY_HASH = """
-SELECT messageid, location, startOffset, endOffset, diskhashid FROM messages WHERE hashid = :hashid
+SELECT messageid, location, startOffset, endOffset, diskhashid
+FROM messages
+WHERE hashid = :hashid
 """
+
 
 class MessageDatabase(object):
 
@@ -89,14 +107,14 @@ class MessageDatabase(object):
         self.init()
 
     def close(self):
-        if self._db != None:
+        if self._db is not None:
             self._db.close()
             self._db = None
 
     def init(self):
         self._db = sqlite3.connect(
             ":memory:"
-            if self._location == None
+            if self._location is None
             else self._location
         )
         for version_schema in SCHEMAS:
@@ -110,7 +128,7 @@ class MessageDatabase(object):
                     cursor.commit()
 
     def _get_db(self):
-        if self._db == None:
+        if self._db is None:
             self.init()
         return self._db
 

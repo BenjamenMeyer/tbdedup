@@ -17,6 +17,7 @@ import datetime
 import os
 import os.path
 
+
 def generate_name(utc_time, name, extension, counter):
     timestamped = utc_time.strftime(f"%Y%m%d_%H%M%S")
     numeric = ""
@@ -27,6 +28,7 @@ def generate_name(utc_time, name, extension, counter):
         if len(extension) == 0
         else f"{timestamped}_{name}.{extension}"
     )
+
 
 def get_filename():
     counter = 0
@@ -39,6 +41,7 @@ def get_filename():
             continue
         else:
             return output_filename
+
 
 def get_directory():
     counter = 0

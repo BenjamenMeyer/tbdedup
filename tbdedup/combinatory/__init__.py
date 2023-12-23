@@ -38,6 +38,7 @@ from tbdedup.utils import (
 
 LOG = logging.getLogger(__name__)
 
+
 async def runDedup(output_directory, plan, dedup_task, counter_update=None):
     try:
         output_file = await dedup_task
@@ -56,6 +57,7 @@ async def runDedup(output_directory, plan, dedup_task, counter_update=None):
             None,
         )
 
+
 def get_plan_output_directory(folder_pattern, temp_directory, root_file):
     path_loc = root_file.rfind(folder_pattern)
     path = root_file[path_loc:]
@@ -64,6 +66,7 @@ def get_plan_output_directory(folder_pattern, temp_directory, root_file):
         temp_directory,
         f"{final_path}_Dedup"
     )
+
 
 async def combinatory(options, mboxfiles):
     # 1. Run the preplanner and find all the sets of files to deduplicate
@@ -95,10 +98,11 @@ async def combinatory(options, mboxfiles):
         "completed": 0.0,
         "total": 0.0,
     }
+
     def counter_update():
         counters['completed'] = counters['completed'] + 1.0
         if counters['total'] > 0:
-            percentage = counters['completed'] /counters['total'] * 100.0
+            percentage = (counters['completed'] / counters['total']) * 100.0
             LOG.info(f'[Combinatory] Progress Report: {percentage:03.02f}')
 
     with time.TimeTracker("Planning"):
@@ -206,6 +210,7 @@ async def combinatory(options, mboxfiles):
     #    name `Dedup` appended to differentiate them.
     move_workers = []
     LOG.info(f'Arranging to move results back to Thunderbird')
+
     async def move_dedup_mbox(output_directory, plan, mboxfile):
         pass
 
@@ -233,11 +238,12 @@ async def combinatory(options, mboxfiles):
     )
     with open(data_output_file, "wt") as combinatory_output:
         json.dump(
-            preplan, # now holds everything about the entire run
+            preplan,  # now holds everything about the entire run
             combinatory_output,
             indent=4,
             sort_keys=False,
         )
+
 
 async def asyncCombinatory(options):
     locationProcessor = mbox.MailboxFolder(options.location)

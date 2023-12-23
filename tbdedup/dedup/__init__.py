@@ -32,6 +32,7 @@ from tbdedup.utils import (
 
 LOG = logging.getLogger(__name__)
 
+
 def source_option_to_boolean(msg_hash_source):
     # NOTE: in testing found that `msg_hash_source == 'disk'` results
     #   in twice as many files as `msg_hash_source == 'parsed'` with
@@ -40,8 +41,9 @@ def source_option_to_boolean(msg_hash_source):
     return (
         True
         if msg_hash_source == 'disk'
-        else False # `parsed`
+        else False  # `parsed`
     )
+
 
 async def processFile(filename, storage, counter_update=None):
     box = mbox.Mailbox(None, filename)
@@ -53,13 +55,13 @@ async def processFile(filename, storage, counter_update=None):
             try:
                 storage.add_message(
                     msg.getHash(diskHash=False),  # hash for comparisons
-                    msg.getMsgId(), # id
-                    filename, # location
-                    msg.getMessageIDHeader(), # 2nd id from the headers
-                    msg.getMessageIDHeaderHash(), # 2nd hash
+                    msg.getMsgId(),  # id
+                    filename,  # location
+                    msg.getMessageIDHeader(),  # 2nd id from the headers
+                    msg.getMessageIDHeaderHash(),  # 2nd hash
                     msg.start_offset,
                     msg.end_offset,
-                    msg.getHash(diskHash=True), # hash to ensure we read the right thing
+                    msg.getHash(diskHash=True),  # hash to ensure we read the right thing
                 )
                 counter = counter + 1
                 if math.fmod(counter, 10000) == 0:
@@ -77,6 +79,7 @@ async def processFile(filename, storage, counter_update=None):
     if counter_update is not None:
         counter_update()
 
+
 async def dedupper(mboxfiles, msg_hash_storage_location, use_disk_data_for_hash=False, output_base_path=None):
     # NOTE: in testing found that `use_disk_data_for_hash == True` results
     #   in twice as many files as `use_disk_data_for_hash == False` with
@@ -89,10 +92,11 @@ async def dedupper(mboxfiles, msg_hash_storage_location, use_disk_data_for_hash=
         "completed": 0.0,
         "total": 0.0,
     }
+
     def counter_update():
         counters['completed'] = counters['completed'] + 1.0
         if counters['total'] > 0:
-            percentage = counters['completed'] /counters['total'] * 100.0
+            percentage = (counters['completed'] / counters['total']) * 100.0
             msg = (
                 f'[{output_base_path}] ' if output_base_path is not None else ''
             )
@@ -154,6 +158,7 @@ async def dedupper(mboxfiles, msg_hash_storage_location, use_disk_data_for_hash=
     # it's not sent any where else so it can be safely closed now
     storage.close()
     return output_filename
+
 
 # wrap for the command-line
 async def asyncDedup(options):
