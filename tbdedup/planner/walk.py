@@ -70,14 +70,14 @@ class Preplanner(object):
     def has_file(self, root_file):
         return root_file in self.preplanner[keys.preplan_planning]
 
-    def _init_file(self, root_file, location, abs_filename):
+    def init_file(self, root_file, location, abs_filename):
         manager = PreplannerFileManager(
             location
         )
         manager.add_file(abs_filename)
         self.preplanner[keys.preplan_planning][root_file] = manager
 
-    def _append_file(self, root_file, abs_filename):
+    def append_file(self, root_file, abs_filename):
         self.preplanner[keys.preplan_planning][root_file].add_file(
             abs_filename
         )
@@ -96,9 +96,9 @@ class Preplanner(object):
 
             if not self.has_file(root_file):
                 LOG.info(f'Found root {root_file}')
-                self._init_file(root_file, self.location, abs_filename)
+                self.init_file(root_file, self.location, abs_filename)
             else:
-                self._append_file(root_file, abs_filename)
+                self.append_file(root_file, abs_filename)
 
         LOG.info(f'Completed pre-planning')
 

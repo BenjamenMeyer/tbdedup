@@ -18,23 +18,39 @@ import os
 import os.path
 
 
+# impossible to mock `datetime.datetime.utcnow`
+# so this makes it easy to mock for testing
+utcnow = datetime.datetime.utcnow
+
+
+# loop control so things cannot end up in infinite loops
+max_looping = 100000000
+
+
+class ExcessiveLoopError(Exception):
+    pass
+
+
 def generate_name(utc_time, name, extension, counter):
     timestamped = utc_time.strftime(f"%Y%m%d_%H%M%S")
     numeric = ""
     if counter > 0:
         numeric = f"_{counter:03}"
     return (
-        f"{timestamped}_{name}"
+        f"{timestamped}{numeric}_{name}"
         if len(extension) == 0
-        else f"{timestamped}_{name}.{extension}"
+        else f"{timestamped}{numeric}_{name}.{extension}"
     )
 
 
 def get_filename():
     counter = 0
-    utc_time = datetime.datetime.utcnow()
+    utc_time = utcnow()
     while True:
         output_filename = generate_name(utc_time, "dedup_preplanner", "json", counter)
+        if counter > max_looping:
+            raise ExcessiveLoopError("too many iterations to find a valid filename")
+
         if os.path.exists(output_filename):
             counter = counter + 1
             # try again
@@ -45,9 +61,13 @@ def get_filename():
 
 def get_directory():
     counter = 0
-    utc_time = datetime.datetime.utcnow()
+    utc_time = utcnow()
     while True:
         output_directory = generate_name(utc_time, "dedup_planner", "", counter)
+
+        if counter > max_looping:
+            raise ExcessiveLoopError("too many iterations to find a valid filename")
+
         try:
             os.mkdir(output_directory)
         except (FileExistsError, FileNotFoundError):
