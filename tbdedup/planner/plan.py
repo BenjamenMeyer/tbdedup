@@ -39,6 +39,10 @@ class GenerationError(Exception):
     pass
 
 
+class LimitPatternError(Exception):
+    pass
+
+
 async def generate(output_directory, matched_files, file_mapping):
     file_counter = 1
     for filename in matched_files:
@@ -70,7 +74,7 @@ async def generate(output_directory, matched_files, file_mapping):
         "mapping.json",
     )
 
-    file_mapping[keys.plan_counter] = file_counter
+    file_mapping[keys.plan_counter] = file_counter - 1
     file_mapping[keys.plan_map_file] = mapping_file
 
     with open(mapping_file, "wt") as file_mapper:
@@ -79,6 +83,7 @@ async def generate(output_directory, matched_files, file_mapping):
             file_mapper,
             indent=4,
             sort_keys=False,
+            default=lambda __o: __o.__json__() if hasattr(__o, "__json__") else __o
         )
 
 
@@ -91,7 +96,7 @@ async def planner(options, mboxfiles):
         )
     except Exception:
         LOG.error(f"Invalid Pattern Specific: {options.limit_pattern}")
-        return 1
+        raise LimitPatternError(f"Invalid Pattern Specific: {options.limit_pattern}")
 
     allFiles = '\n'.join(mboxfiles)
     matched_files = []
@@ -116,10 +121,13 @@ async def planner(options, mboxfiles):
     }
 
     try:
-        mapping_file = await generate(output_directory, matched_files, file_mapping)
-    except Exception:
-        LOG.exception('Error during file linkage')
         mapping_file = None
+        await generate(output_directory, matched_files, file_mapping)
+    except Exception:  # pragma: no cover
+        LOG.exception('Error during file linkage')
+        raise
+    else:
+        mapping_file = file_mapping[keys.plan_map_file]
 
     return (output_directory, mapping_file)
 
@@ -130,4 +138,7 @@ async def asyncPlanner(options):
     with time.TimeTracker("File Search"):
         mboxfiles = await locationProcessor.getMboxFiles()
     with time.TimeTracker("Planner"):
-        await planner(options, mboxfiles)
+        try:
+            await planner(options, mboxfiles)
+        except LimitPatternError:  # pragma: no cover
+            return 1
