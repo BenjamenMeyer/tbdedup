@@ -44,7 +44,6 @@ THUNDERBIRD_HEADERS = [
 
 
 class Message(object):
-    MESSAGE_ID = "Message-ID"
 
     def __init__(self, index, fromLine, start_offset):
         # LOG.info(f'Record[{index}] - Start Location: {start_offset}')
@@ -98,21 +97,18 @@ class Message(object):
             for rl in self.rawLines:
                 mhash.update(encoder.to_encoding(rl))
         else:
-            skip_keys = [
-                'X-Mozilla-Status',
-                'X-Mozilla-Status2',
-                'X-Mozilla-Keys',
-                'X-Apparently-To',
-                'Message-iD',
-            ]
             matchers = [
                 re.compile(f"^{skip_header}", flags=re.I)
                 for skip_header in THUNDERBIRD_HEADERS
             ]
             for k, v in self.headers.items():
+                do_skip = False
                 for m in matchers:
                     if m.match(k):
+                        do_skip = True
                         continue
+                if do_skip:
+                    continue
                 for vline in v:
                     mhash.update(encoder.to_encoding(vline))
             for line in self.lines:
