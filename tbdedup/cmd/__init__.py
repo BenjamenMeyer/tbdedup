@@ -19,14 +19,20 @@ import logging
 import sys
 
 from tbdedup import (
+    combinatory,
     dedup,
-    planner,
 )
-from tbdedup.planner import walk as planner_walk
+from tbdedup.planner import (
+    plan as planner_plan,
+    walk as planner_walk,
+)
 
 LOG = logging.getLogger(__name__)
 
+
 async def asyncMain():
+    message_hash_source_choices = ['disk', 'parsed']
+
     argument_parser = argparse.ArgumentParser(
         description="Thunderbird MBox Deduplicator"
     )
@@ -57,7 +63,7 @@ async def asyncMain():
     )
     dedup_parser.add_argument(
         '--msg-hash-source',
-        choices=['disk','parsed'],
+        choices=message_hash_source_choices,
         help='Specify which source to use for the hash. `disk` means using the raw message off the disk. `parsed` means using everything but the MBOX FROM line that identifies the message',
         default='parsed',
     )
@@ -73,13 +79,13 @@ async def asyncMain():
         help='Directory to search for Thunderbird MBox Files',
     )
     planner_parser.add_argument(
-        '--pattern', '-p',
+        '--limit-pattern', '-lp',
         default=None,
         type=str,
         required=False,
         help="Pattern to limit the files to if provided",
     )
-    planner_parser.set_defaults(func=planner.asyncPlanner)
+    planner_parser.set_defaults(func=planner_plan.asyncPlanner)
 
     preplanner_parser = subparsers.add_parser('preplanner')
     preplanner_parser.add_argument(
@@ -90,14 +96,58 @@ async def asyncMain():
         help='Directory to search for Thunderbird MBox Files',
     )
     preplanner_parser.add_argument(
-        '--pattern', '-p',
+        '--folder-pattern', '-fp',
         default="Inbox.sbd/",
         type=str,
         required=False,
         help="Pattern split file paths in order to match common paths",
     )
     preplanner_parser.set_defaults(func=planner_walk.asyncPreplanner)
-    
+
+    combinatory_parser = subparsers.add_parser('do')
+
+    combinatory_parser.add_argument(
+        '--location', '-l',
+        default=None,
+        type=str,
+        required=True,
+        help='Directory to search for Thunderbird MBox Files',
+    )
+    combinatory_parser.add_argument(
+        '--storage-location', '-sl',
+        default=None,
+        type=str,
+        required=False,
+        help='Directory location to use for storage while processing',
+    )
+    combinatory_parser.add_argument(
+        '--hash-storage', '-hs',
+        default=None,
+        type=str,
+        required=False,
+        help="Specify where to store the database information",
+    )
+    combinatory_parser.add_argument(
+        '--msg-hash-source',
+        choices=message_hash_source_choices,
+        help='Specify which source to use for the hash. `disk` means using the raw message off the disk. `parsed` means using everything but the MBOX FROM line that identifies the message',
+        default='parsed',
+    )
+    combinatory_parser.add_argument(
+        '--folder-pattern', '-fp',
+        default="Inbox.sbd/",
+        type=str,
+        required=False,
+        help="Pattern split file paths in order to match common paths",
+    )
+    combinatory_parser.add_argument(
+        '--limit-pattern', '-lp',
+        default=None,
+        type=str,
+        required=False,
+        help="Pattern to limit the files to if provided",
+    )
+    combinatory_parser.set_defaults(func=combinatory.asyncCombinatory)
 
     arguments = argument_parser.parse_args()
     # log config is optional
@@ -115,15 +165,22 @@ async def asyncMain():
         log.addHandler(lf)
         log.setLevel(logging.DEBUG)
 
-    result = await arguments.func(arguments)
+    try:
+        result = await arguments.func(arguments)
+    except Exception:
+        LOG.exception('Error during processing')
+        result = -1
+
     if result is not None:
         return result
     else:
         return 0
 
+
 # main is a simple wrapper for the setup's console_script
 def main():
     asyncio.run(asyncMain())
+
 
 if __name__ == "__main__":
     sys.exit(main)

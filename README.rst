@@ -98,6 +98,26 @@ This will put `tbdedup` into your environment based on your installation method.
 
 .. note:: PyPi likely also can install directly from Git without having to check it out first.
 
+Running the Preplanner
+----------------------
+
+`tbdedup` provides the ability to search through a path to identify groups of files that should
+be deduplicated together based the path within the Thunderbird Inbox. The basic idea is that
+if something happens that the Inbox becomes recursively copied in on itself this would
+identify the duplicated folders.
+
+By default the preplanner will split on the `Inbox.sbd`:
+
+.. code-block:: shell
+
+    $ tb-dedup preplanner --location ~/.thunderbird/dm8a9v53.default/Mail/Local\ Folders/Inbox.sbd/
+
+However, you can specify a different folder using the `--folder-pattern` parameter:
+
+.. code-block:: shell
+
+    $ tb-dedup preplanner --location ~/.thunderbird/dm8a9v53.default/Mail/Local\ Folders/Inbox.sbd/ --folder-pattern "Dedup/"
+
 Running the Planner
 -------------------
 
@@ -127,7 +147,7 @@ Then you could run the following:
 
 .. code-block:: shell
 
-    $ tb-dedup planner --location "~/.thunderbird/dm8a9v53.default/Mail/Local Folders" --pattern ".*\\personal\/favors$"
+    $ tb-dedup planner --location "~/.thunderbird/dm8a9v53.default/Mail/Local Folders" --limit-pattern ".*\\personal\/favors$"
 
 
 Running the Deduplication

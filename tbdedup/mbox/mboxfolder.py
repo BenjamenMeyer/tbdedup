@@ -23,7 +23,7 @@ LOG = logging.getLogger(__name__)
 
 
 class MailboxFolder(object):
-    
+
     def __init__(self, foldername):
         self.foldername = foldername
 

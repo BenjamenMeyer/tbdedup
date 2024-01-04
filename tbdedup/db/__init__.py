@@ -16,7 +16,7 @@ limitations under the License.
 Database
 
 Table 1:
-- Hash ID, Disk Hash ID, Message ID, Message ID 2, Hash ID 2, Location, Disk Start Offset, Disk End Offset 
+- Hash ID, Disk Hash ID, Message ID, Message ID 2, Hash ID 2, Location, Disk Start Offset, Disk End Offset
 - There are no primary keys
 - Data should be looked up based on either the Hash ID or the Disk Hash ID
 - Message ID is not guaranteed to be unique; and Hash ID 2 is the hash of the Message ID (again, not guaranteed to be unique).
@@ -45,41 +45,59 @@ SCHEMAS = [
 ]
 
 ADD_SCHEMA_VERSION = """
-INSERT INTO schema_version (version) VALUES(:version)
+INSERT INTO schema_version (version)
+VALUES(:version)
 """
 
 GET_SCHEMA_VERSION = """
-SELECT MAX(version) FROM schema_version
+SELECT MAX(version)
+FROM schema_version
 """
 
 
 ADD_MESSAGE = """
-INSERT INTO messages(hashid, diskhashid, messageid, messageid2, hashid2, location, startOffset, endOffset)  VALUES(:hashid, :diskhashid, :messageid, :messageid2, :hashid2, :location, :startOffset, :endOffset)
+INSERT INTO messages(hashid, diskhashid, messageid, messageid2, hashid2, location, startOffset, endOffset)
+VALUES(:hashid, :diskhashid, :messageid, :messageid2, :hashid2, :location, :startOffset, :endOffset)
 """
 
 DISK_GET_UNIQUE_MESSAGE_COUNT = """
-SELECT COUNT(*) FROM (SELECT DISTINCT diskhashid FROM messages)
+SELECT COUNT(*)
+FROM (
+    SELECT DISTINCT diskhashid
+    FROM messages
+)
 """
 
 DISK_GET_MESSAGE_HASHES = """
-SELECT DISTINCT diskhashid FROM messages
+SELECT DISTINCT diskhashid
+FROM messages
 """
 
 DISK_GET_MESSAGES_BY_HASH = """
-SELECT messageid, location, startOffset, endOffset, diskhashid FROM messages WHERE diskhashid = :diskhashid
+SELECT messageid, location, startOffset, endOffset, diskhashid
+FROM messages
+WHERE diskhashid = :diskhashid
 """
 
 GET_UNIQUE_MESSAGE_COUNT = """
-SELECT COUNT(*) FROM (SELECT DISTINCT hashid FROM messages)
+SELECT COUNT(*)
+FROM (
+    SELECT DISTINCT hashid
+    FROM messages
+)
 """
 
 GET_MESSAGE_HASHES = """
-SELECT DISTINCT hashid FROM messages
+SELECT DISTINCT hashid
+FROM messages
 """
 
 GET_MESSAGES_BY_HASH = """
-SELECT messageid, location, startOffset, endOffset, diskhashid FROM messages WHERE hashid = :hashid
+SELECT messageid, location, startOffset, endOffset, diskhashid
+FROM messages
+WHERE hashid = :hashid
 """
+
 
 class MessageDatabase(object):
 
@@ -88,24 +106,35 @@ class MessageDatabase(object):
         self._location = storageLocation
         self.init()
 
+    def close(self):
+        if self._db is not None:
+            self._db.close()
+            self._db = None
+
     def init(self):
         self._db = sqlite3.connect(
             ":memory:"
-            if self._location == None
+            if self._location is None
             else self._location
         )
         for version_schema in SCHEMAS:
             current_schema_version = self.get_schema_version()
             if current_schema_version < version_schema["version"]:
+                # directly access the db here since it was just
+                # initialized
                 with self._db as cursor:
                     for change in version_schema["changes"]:
                         cursor.execute(change)
                     cursor.commit()
 
+    def _get_db(self):
+        if self._db is None:
+            self.init()
+        return self._db
 
     def get_schema_version(self):
         try:
-            with self._db as cursor:
+            with self._get_db() as cursor:
                 result = cursor.execute(GET_SCHEMA_VERSION)
                 values = result.fetchone()
                 return values[0]
@@ -113,7 +142,7 @@ class MessageDatabase(object):
             return -1
 
     def add_message(self, msg_hash, msg_id, msg_location, msg_id2, msg_hash2, start_offset, end_offset, disk_hash):
-        with self._db as cursor:
+        with self._get_db() as cursor:
             result = cursor.execute(
                 ADD_MESSAGE,
                 {
@@ -129,7 +158,7 @@ class MessageDatabase(object):
             )
 
     def get_unique_message_count(self, use_disk=False):
-        with self._db as cursor:
+        with self._get_db() as cursor:
             result = cursor.execute(
                 DISK_GET_UNIQUE_MESSAGE_COUNT
                 if use_disk
@@ -139,7 +168,7 @@ class MessageDatabase(object):
             return value[0]
 
     def get_message_hashes(self, use_disk=False):
-        with self._db as cursor: 
+        with self._get_db() as cursor:
             for msg_hash in cursor.execute(
                 DISK_GET_MESSAGE_HASHES
                 if use_disk
@@ -148,7 +177,7 @@ class MessageDatabase(object):
                 yield msg_hash[0]
 
     def get_messages_by_hash(self, hashid, use_disk=False):
-        with self._db as cursor:
+        with self._get_db() as cursor:
             sqlquery = (
                 DISK_GET_MESSAGES_BY_HASH
                 if use_disk

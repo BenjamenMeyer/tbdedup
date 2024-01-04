@@ -1,0 +1,5 @@
+coverage
+ddt
+mock
+pytest
+pytest-cov
