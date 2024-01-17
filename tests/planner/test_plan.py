@@ -25,7 +25,6 @@ from unittest import mock
 from tbdedup.planner import (
     keys,
     plan,
-    # walk,
 )
 
 from tests import base

@@ -15,7 +15,6 @@ limitations under the License.
 """
 import asyncio
 import datetime
-import json
 import logging
 import os
 import os.path
@@ -33,6 +32,7 @@ from tbdedup.planner import (
     walk as planner_walk,
 )
 from tbdedup.utils import (
+    json,
     time,
 )
 
@@ -44,13 +44,24 @@ async def runDedup(output_directory, plan, dedup_task, counter_update=None):
         output_file = await dedup_task
         if counter_update is not None:
             counter_update()
+
+        plan.combinatory[planner_keys.plan_location][plan_mbox] = output_file
+
+        plan_output_filename = os.path.join(
+            output_directory,
+            "plan_output.json",
+        )
+        plan.combinatory[planner_keys.plan_location][plan_output_plan] = plan_output_filename
+
+        json.dump_to_file(plan_output_filename, plan)
+
         return (
             output_directory,
             plan,
             output_file,
         )
     except Exception:
-        LOG.exception(f'Failed while carrying out plan for {run.location}')
+        LOG.exception(f'Failed while carrying out plan for {output_directory}')
         return (
             output_directory,
             plan,
@@ -236,13 +247,7 @@ async def combinatory(options, mboxfiles):
         else options.storage_location,
         "combinatory_operation.json",
     )
-    with open(data_output_file, "wt") as combinatory_output:
-        json.dump(
-            preplan,  # now holds everything about the entire run
-            combinatory_output,
-            indent=4,
-            sort_keys=False,
-        )
+    json.dump_to_file(ddata_output_file, preplan)
 
 
 async def asyncCombinatory(options):

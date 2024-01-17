@@ -15,7 +15,6 @@ limitations under the License.
 """
 import asyncio
 import datetime
-import json
 import logging
 import os
 import os.path
@@ -29,6 +28,7 @@ from . import (
     output,
 )
 from tbdedup.utils import (
+    json,
     time,
 )
 
@@ -77,14 +77,7 @@ async def generate(output_directory, matched_files, file_mapping):
     file_mapping[keys.plan_counter] = file_counter - 1
     file_mapping[keys.plan_map_file] = mapping_file
 
-    with open(mapping_file, "wt") as file_mapper:
-        json.dump(
-            file_mapping,
-            file_mapper,
-            indent=4,
-            sort_keys=False,
-            default=lambda __o: __o.__json__() if hasattr(__o, "__json__") else __o
-        )
+    json.dump_to_file(mapping_file, file_mapping)
 
 
 async def planner(options, mboxfiles):

@@ -14,18 +14,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-plan_counter = "counter"
-plan_file_map = "file_map"
-plan_pattern = "pattern"
-plan_location = "location"
-plan_map_file = "map_file"
-plan_output = "output"
-plan_source = "source"
-plan_mbox = "mbox"
-plan_output_plan = "plan"
+import json
 
-preplan_location = "location"
-preplan_planning = "planning"
 
-preplan_planning_file_location = "location"
-preplan_planning_file_files = "files"
+def dump_to_file(filename, data):
+    with open(filename, "wt") as json_output:
+        json.dump(
+            data,
+            json_output,
+            indent=4,
+            sort_keys=False,
+            default=lambda __o: __o.__json__() if hasattr(__o, "__json__") else __o
+        )

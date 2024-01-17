@@ -16,7 +16,6 @@ limitations under the License.
 
 import asyncio
 import datetime
-import json
 import logging
 import os
 import os.path
@@ -29,6 +28,7 @@ from . import (
     output,
 )
 from tbdedup.utils import (
+    json,
     time,
 )
 
@@ -105,14 +105,7 @@ class Preplanner(object):
         LOG.info(f'Found {len(self.preplanner[keys.preplan_planning])} unique sets')
         self.output_filename = output.get_filename()
         LOG.info(f'Writing preplan to {os.path.abspath(self.output_filename)}')
-        with open(self.output_filename, "wt") as preplan_output:
-            json.dump(
-                self.preplanner,
-                preplan_output,
-                indent=4,
-                sort_keys=False,
-                default=lambda __o: __o.__json__() if hasattr(__o, "__json__") else __o
-            )
+        json.dump_to_file(self.output_filename, self.preplanner)
         LOG.info('Preplan complete')
         return self.preplanner
 
