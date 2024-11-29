@@ -13,29 +13,30 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-import hashlib
 import logging
-import mailbox # builtin
 import re
 import sys
-
-#from tbdedup import (
-#    utils,
-#)
 
 from . import mboxmessage
 
 LOG = logging.getLogger(__name__)
 
+
 class ErrInvalidFileFormat(Exception):
     pass
+
 
 class ErrInvalidRecordLength(Exception):
     pass
 
+
+class ErrEmptyFile(Exception):
+    pass
+
+
 class Mailbox(object):
     mboxRdMatch = re.compile(r'^>\s?From - ')
-    mboxOMatch  = re.compile(r'^From - ')
+    mboxOMatch = re.compile(r'^From - ')
     mboxCLMatch = re.compile(r'^Content-Length:')
 
     # Start Line: `^FROM - [DOW] [MOY] [DD] [hh]:[mm]:[ss] [yyyy]$`
@@ -56,6 +57,7 @@ class Mailbox(object):
     def __init__(self, db, filename):
         self.db = db
         self.filename = filename
+        self.debug_enabled = False
 
     @classmethod
     def detect_mbox_type(cls, filename):
@@ -112,73 +114,69 @@ class Mailbox(object):
                 LOG.info("Detected MBOXCL2")
                 return cls.MBOXCL2
 
-            else: # elif not fromIsPrepended and not hasContentLength:
+            else:  # elif not fromIsPrepended and not hasContentLength:
                 LOG.info("Detected MBOXO")
                 return cls.MBOXO
 
-    @staticmethod
-    def getMessages(filename):
-        # So we try another method:
-        with open(filename, 'rb') as data_input:
-            matches = []
-            offset = 0
-            #re = 
-            foundBlankLine = False
-            inRecord = False
-            recordCounter = 0
-            currentRecord = mboxmessage.Message(0, "")
-            
-            for line in data_input:
-                line = line.decode('latin1').strip()
-                if len(line) == 0:
-                    foundBlankLine = True
-                    continue
-
-                isRdMatch = Mailbox.mboxRdMatch.match(line)
-                isOMatch = Mailbox.mboxOMatch.match(line)
-
-                if (isRdMatch or isOMatch):
-                    if foundBlankLine:
-                        # new record
-
-                        # pass back the previous record
-                        yield currentRecord
-
-                        # increment the record counter and reset
-                        recordCounter = recordCounter + 1
-                        currentRecord = mboxmessage.Message(recordCounter, line)
-                        continue
-
-                    elif recordCounter == 0:
-                        # first record is not preceeded by a blank line
-                        currentRecord.fromLine = line
-                        continue
-
-                currentRecord.lines.append(line)
-
-                foundBlankLine = False
+    # @staticmethod
+    # def getMessages(filename):
+    #    # So we try another method:
+    #    with open(filename, 'rb') as data_input:
+    #        matches = []
+    #        offset = 0
+    #        foundBlankLine = False
+    #        inRecord = False
+    #        recordCounter = 0
+    #        currentRecord = mboxmessage.Message(0, "", 0)
+    #        for line in data_input:
+    #            line = line.decode('latin1').strip()
+    #            if len(line) == 0:
+    #                foundBlankLine = True
+    #                continue
+    #            isRdMatch = Mailbox.mboxRdMatch.match(line)
+    #            isOMatch = Mailbox.mboxOMatch.match(line)
+    #            if (isRdMatch or isOMatch):
+    #                if foundBlankLine:
+    #                    # new record
+    #                    # pass back the previous record
+    #                    yield currentRecord
+    #                    # increment the record counter and reset
+    #                    recordCounter = recordCounter + 1
+    #                    currentRecord = mboxmessage.Message(recordCounter, line)
+    #                    continue
+    #                elif recordCounter == 0:
+    #                    # first record is not preceeded by a blank line
+    #                    currentRecord.fromLine = line
+    #                    continue
+    #            currentRecord.lines.append(line)
+    #            foundBlankLine = False
 
     def parseBoundaryMarker(self, currentRecord, header_name):
         record_boundary_marker = ""
-        header_value = currentRecord.getData(header_name).decode('latin1')
-        #'='.join(y.split(':')[1].split("\r\n")[1].strip().split('=')[1:])
+        header_value_data = currentRecord.getData(header_name)
+        if header_value_data is None:
+            print("no header value data")
+            return None
+
+        header_value = header_value_data.decode('latin1')
+        # '='.join(y.split(':')[1].split("\r\n")[1].strip().split('=')[1:])
         value_components = header_value.split(":")[1].split("\r\n")
-        #LOG.info(f'Found Content Type Components: {value_components}')
+        # LOG.info(f'Found Content Type Components: {value_components}')
         for value_line in value_components:
             vline = value_line.strip()
             if '=' in vline:
-                #LOG.info(f'Found potential Content Boundary Marker: "{vline}"')
+                # LOG.info(f'Found potential Content Boundary Marker: "{vline}"')
                 vline_components = vline.split('=')
                 vline_key = vline_components[0]
                 vline_data = '='.join(vline_components[1:])
-                if vline_key.lower() == 'boundary':
+                if vline_key.lower().endswith('boundary'):
                     try:
-                        #LOG.info(f'Found Content Boundary Marker: RAW = "{vline_data}"')
+                        # LOG.info(f'Found Content Boundary Marker: RAW = "{vline_data}"')
                         if '"' in vline_data:
                             record_boundary_marker = '--' + vline_data.split('"')[1]
                         else:
                             record_boundary_marker = '--' + vline_data
-                        #LOG.info(f'Found Content Boundary Marker: "{record_boundary_marker}"')
+                        # LOG.info(f'Found Content Boundary Marker: "{record_boundary_marker}"')
                     except Exception:
                         LOG.info(f'Found Content Boundary Marker: RAW = "{vline_data}"')
                         LOG.exception(f'Failed to parse boundary marker')
@@ -188,25 +186,37 @@ class Mailbox(object):
 
     def buildSummary(self):
         with open(self.filename, 'rb') as data_input:
+            data_input.seek(0, 2) # move to the end of the file
+            file_length = data_input.tell()
+            data_input.seek(0, 0) # move back to the start of the file
+            if not file_length:
+                # no data in the file
+                msg = f'{self.filename} is empty'
+                LOG.debug(msg)
+                raise ErrEmptyFile(msg)
+
+
             recordIndex = 0
             recordCounter = 0
             currentRecord = mboxmessage.Message(0, "", 0)
             foundBlankLine = False
 
             def log_file_tracking(msg, old_pos, new_pos):
-                # Enable the below for debugging
-                LOG.debug(f'{self.filename}[{recordIndex}][Old Pos: {old_pos} New Pos: {new_pos}] {msg}')
+                if self.debug_enabled:
+                    # Enable the below for debugging
+                    LOG.debug(f'{self.filename}[{recordIndex}][Old Pos: {old_pos} New Pos: {new_pos}] {msg}')
 
             def get_msg_file(counter):
-                #return open(f"msg{counter}", "wb")
+                if self.debug_enabled:
+                    return open(f"msg{counter}", "wb")
                 return None
 
             # Create the first file for output
             msg_output = get_msg_file(recordCounter)
 
-            def potential_write(l):
+            def potential_write(line):
                 if msg_output is not None:
-                    msg_output.write(l)
+                    msg_output.write(line)
 
             # so file_location will escape the loop
             file_location = 0
@@ -217,24 +227,24 @@ class Mailbox(object):
             for rawline in data_input:
                 previous_file_location = file_location
                 file_location = data_input.tell()
-                #log_file_tracking(f"Old Location: {previous_file_location} New Location: {file_location}")
+                log_file_tracking(f"Old Location: {previous_file_location} New Location: {file_location}", previous_file_location, file_location)
                 rawline2 = rawline.decode('latin1')
                 line = rawline2.strip()
                 isStartLine = self.mboxMessageStart.match(line)
                 isHeaderLine = self.mboxHeaderStart.match(rawline2)
 
                 if recordIndex == 0:
-                    if not isStartLine: 
+                    if not isStartLine:
                         # start line does not match properly
                         raise ErrInvalidFileFormat(f"invalid start line: {line}")
 
                     # start line does match
-                    #log_file_tracking(f'Found start of file: \"{rawline}\"', previous_file_location, file_location)
+                    log_file_tracking(f'Found start of file: \"{rawline}\"', previous_file_location, file_location)
                     currentRecord = mboxmessage.Message(0, rawline, previous_file_location)
                     potential_write(rawline)
 
                 elif len(line) == 0:
-                    #log_file_tracking('Found blank line', previous_file_location, file_location)
+                    log_file_tracking('Found blank line', previous_file_location, file_location)
                     foundBlankLine = True
                     currentRecord.addData(header_name, rawline)
                     potential_write(rawline)
@@ -248,13 +258,13 @@ class Mailbox(object):
                         lower_header_name = header_name.lower()
                         if lower_header_name == "content-type":
                             record_boundary_marker = self.parseBoundaryMarker(currentRecord, header_name)
-                            #log_file_tracking(f'Found Content Type: {header_name}: "{currentRecord.getData(header_name)}"', previous_file_location, file_location)
-                            #record_boundary_marker = ""
-                            #header_value = currentRecord.getData(header_name).decode('latin1')
-                            ##'='.join(y.split(':')[1].split("\r\n")[1].strip().split('=')[1:])
-                            #value_components = header_value.split(":")[1].split("\r\n")
-                            #log_file_tracking(f'Found Content Type Components: {value_components}', previous_file_location, file_location)
-                            #for value_line in value_components:
+                            log_file_tracking(f'Found Content Type: {header_name}: "{currentRecord.getData(header_name)}"', previous_file_location, file_location)
+                            # record_boundary_marker = ""
+                            # header_value = currentRecord.getData(header_name).decode('latin1')
+                            # #'='.join(y.split(':')[1].split("\r\n")[1].strip().split('=')[1:])
+                            # value_components = header_value.split(":")[1].split("\r\n")
+                            # log_file_tracking(f'Found Content Type Components: {value_components}', previous_file_location, file_location)
+                            # for value_line in value_components:
                             #    vline = value_line.strip()
                             #    if '=' in vline:
                             #        log_file_tracking(f'Found potential Content Boundary Marker: "{vline}"', previous_file_location, file_location)
@@ -265,39 +275,39 @@ class Mailbox(object):
                             #            record_boundary_marker = '--' + vline_data.split('"')[1]
                             #            log_file_tracking(f'Found Content Boundary Marker: "{record_boundary_marker}"', previous_file_location, file_location)
                             #
-                            #matches = self.mboxHeaderStart.match(raw_header_value, re.MULTILINE)
-                            #hname = matches.groups()[0]
-                            #hvalue = matches.groups()[1]
-                            #log_file_tracking(f'Content Type has value: {hvalue}', previous_file_location, file_location)
+                            # matches = self.mboxHeaderStart.match(raw_header_value, re.MULTILINE)
+                            # hname = matches.groups()[0]
+                            # hvalue = matches.groups()[1]
+                            # log_file_tracking(f'Content Type has value: {hvalue}', previous_file_location, file_location)
 
                     # capture the new header
                     header_name = isHeaderLine.groups()[0]
                     header_data = isHeaderLine.groups()[1]
-                    #log_file_tracking(f'Found Header field: {header_name} = "{header_data}"', previous_file_location, file_location)
+                    log_file_tracking(f'Found Header field: {header_name} = "{header_data}"', previous_file_location, file_location)
                     currentRecord.addData(header_name, rawline)
 
                     if header_name.lower() == "content-length":
-                        #log_file_tracking(f'Found Content Length: {header_name}: "{currentRecord.getData(header_name)}"', previous_file_location, file_location)
+                        log_file_tracking(f'Found Content Length: {header_name}: "{currentRecord.getData(header_name)}"', previous_file_location, file_location)
                         currentRecord.setContentLength(header_data)
-                
+
                 elif line == record_boundary_marker:
                     foundBlankLine = False
-                    #log_file_tracking(f'Found Content Boundary Marker - {record_boundary_marker}', previous_file_location, file_location)
+                    log_file_tracking(f'Found Content Boundary Marker - {record_boundary_marker}', previous_file_location, file_location)
                     # denote that the body is now being processed
                     header_name = 'body'
                     currentRecord.addData(header_name, rawline)
 
                 elif foundBlankLine and isStartLine:
-                    #log_file_tracking(f'Found start of new record', previous_file_location, file_location)
+                    log_file_tracking(f'Found start of new record', previous_file_location, file_location)
                     # point the end_offset at the previous line
                     currentRecord.end_offset = previous_file_location
                     # drop the blank line just added
                     if len(currentRecord.lines) != 0:
                         currentRecord.lines.pop()
-                    #log_file_tracking(f'Returning record number {recordCounter}', previous_file_location, file_location)
+                    log_file_tracking(f'Returning record number {recordCounter}', previous_file_location, file_location)
                     yield currentRecord
 
-                    #log_file_tracking(f'Start of next message: \"{rawline}\"', previous_file_location, file_location)
+                    log_file_tracking(f'Start of next message: \"{rawline}\"', previous_file_location, file_location)
                     if msg_output is not None:
                         msg_output.close()
                         if recordCounter < 10:
@@ -322,7 +332,7 @@ class Mailbox(object):
                     currentRecord.addData(header_name, rawline)
 
                 else:
-                    #log_file_tracking(f'Content[{header_name}]: "{rawline}"', previous_file_location, file_location)
+                    log_file_tracking(f'Content[{header_name}]: "{rawline}"', previous_file_location, file_location)
                     foundBlankLine = False
                     currentRecord.addData(header_name, rawline)
                     potential_write(rawline)
@@ -333,18 +343,23 @@ class Mailbox(object):
                 currentRecord.end_offset = data_input.tell()
                 yield currentRecord
 
-    def getMessageData(self, hash_id):
-        for msgData in self.db.get_messages_by_hash(hash_id):
-            # they should all be the same so just return the first one
-            return msgData
-
     @classmethod
     def getMessageFromFile(cls, msgData) -> bytes:
         with open(msgData['location'], 'rb') as data_input:
+            data_input.seek(0, 2) # move to the end of the file
+            file_length = data_input.tell()
+            data_input.seek(0, 0) # move back to the start of the file
+            if not file_length:
+                # file is empty so return an empty array
+                return b''
+
             length = msgData['end_offset'] - msgData['start_offset']
             LOG.info(f'Reading - Record[{msgData["messageid"]}] Start Offset: {msgData["start_offset"]} End Ofset: {msgData["end_offset"]} - Length: {length}')
             if length > 0:
                 data_input.seek(msgData['start_offset'])
                 return data_input.read(length)
+            elif length == 0:
+                # message length is zero; file is empty or its a message at the end of the file
+                return b''
             else:
                 raise ErrInvalidRecordLength(f"{msgData['end_offset']} - {msgData['start_offset']} = {length} <= 0")

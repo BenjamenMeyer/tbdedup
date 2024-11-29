@@ -16,7 +16,14 @@ limitations under the License.
 import sys
 from setuptools import setup, find_packages
 
-REQUIRES = ['mailbox']
+REQUIRES = [
+    'mailbox',
+    #'asyncqt',
+    #'qasync',
+    #'PySide6',
+    'asyncSlot',
+    'PyQt5',
+]
 EXTRA_REQUIRES = {
 }
 
@@ -33,9 +40,10 @@ setup(
     entry_points={
         'console_scripts': [
             'tb-dedup=tbdedup.cmd:main',
+            'tb-dedup-gui=tbdedup.gui2:main',
         ],
     },
-    test_suite='thunderbirddedup',
+    test_suite='tbdedup',
     packages=find_packages(exclude=['tests*', 'tbdedup/tests']),
     zip_safe=True,
     classifiers=[

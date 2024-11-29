@@ -14,15 +14,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 import hashlib
-import mailbox # builtin
 import re
 import logging
 
-#from tbdedup import (
-#    utils,
-#)
+from tbdedup.utils import encoder
 
 LOG = logging.getLogger(__name__)
+
 
 def Atoi(s):
     intMap = {
@@ -35,6 +33,7 @@ def Atoi(s):
         result = (result * 10) + cV
     return result
 
+
 THUNDERBIRD_HEADERS = [
     'X-Mozilla-Status',     # Status Field
     'X-Mozilla-Status2',    # 2nd Status Field
@@ -43,11 +42,11 @@ THUNDERBIRD_HEADERS = [
     'Message-ID',           # Unique Message ID
 ]
 
+
 class Message(object):
-    MESSAGE_ID = "Message-ID"
 
     def __init__(self, index, fromLine, start_offset):
-        #LOG.info(f'Record[{index}] - Start Location: {start_offset}')
+        # LOG.info(f'Record[{index}] - Start Location: {start_offset}')
         # the RAW from line that denotes the message break in MBOX format
         self.fromLine = fromLine
         # the starting and ending offset in the file (integer position) of
@@ -85,38 +84,35 @@ class Message(object):
                 return None
 
     def setContentLength(self, rawDataValue):
-        #LOG.info(f'Received Raw Content Length Data: "{rawDataValue}"')
+        # LOG.info(f'Received Raw Content Length Data: "{rawDataValue}"')
         dv = rawDataValue.strip()
-        #LOG.info(f'Removed whitespace: "{dv}"')
+        # LOG.info(f'Removed whitespace: "{dv}"')
         content_length = Atoi(dv)
-        #LOG.info(f'Detected Content Length Integer value of {content_length}')
+        # LOG.info(f'Detected Content Length Integer value of {content_length}')
         self.content_length = content_length
 
     def getHash(self, diskHash=False):
         mhash = hashlib.sha256()
         if diskHash:
             for rl in self.rawLines:
-                mhash.update(rl)
+                mhash.update(encoder.to_encoding(rl))
         else:
-            skip_keys = [
-                'X-Mozilla-Status',
-                'X-Mozilla-Status2',
-                'X-Mozilla-Keys',
-                'X-Apparently-To',
-                'Message-iD',
-            ]
             matchers = [
                 re.compile(f"^{skip_header}", flags=re.I)
                 for skip_header in THUNDERBIRD_HEADERS
             ]
             for k, v in self.headers.items():
+                do_skip = False
                 for m in matchers:
                     if m.match(k):
+                        do_skip = True
                         continue
+                if do_skip:
+                    continue
                 for vline in v:
-                    mhash.update(vline)
-            for l in self.lines:
-                mhash.update(l)
+                    mhash.update(encoder.to_encoding(vline))
+            for line in self.lines:
+                mhash.update(encoder.to_encoding(line))
 
         return mhash.hexdigest()
 
@@ -132,10 +128,5 @@ class Message(object):
     def getMessageIDHeaderHash(self):
         idHeader = self.getMessageIDHeader()
         m = hashlib.sha256()
-        if type(idHeader) == bytes:
-            m.update(idHeader)
-        elif type(idHeader) == str:
-            m.update(bytes(idHeader, 'utf-8'))
-        else:
-            m.update(bytes(str(idHeader), 'utf-8'))
+        m.update(encoder.to_encoding(idHeader))
         return m.hexdigest()

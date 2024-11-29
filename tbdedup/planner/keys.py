@@ -13,3 +13,19 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
+
+plan_counter = "counter"
+plan_file_map = "file_map"
+plan_pattern = "pattern"
+plan_location = "location"
+plan_map_file = "map_file"
+plan_output = "output"
+plan_source = "source"
+plan_mbox = "mbox"
+plan_output_plan = "plan"
+
+preplan_location = "location"
+preplan_planning = "planning"
+
+preplan_planning_file_location = "location"
+preplan_planning_file_files = "files"

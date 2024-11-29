@@ -13,3 +13,18 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
+from tbdedup.planner import keys
+
+from tests import base
+
+
+class TestPlannerKeys(base.TestCase):
+
+    def test_keys(self):
+        kv = {
+            k: getattr(keys, k)
+            for k in dir(keys)
+            if not k.startswith("__")
+        }
+        for _, v in kv.items():
+            self.assertEqual(type(v), type(""))
