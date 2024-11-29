@@ -17,7 +17,6 @@ import asyncio
 import datetime
 import hashlib
 import logging
-import math
 import os.path
 
 from tbdedup import (
@@ -64,14 +63,18 @@ async def processFile(filename, storage, counter_update=None):
                     msg.getHash(diskHash=True),  # hash to ensure we read the right thing
                 )
                 counter = counter + 1
-                if math.fmod(counter, 10000) == 0:
+                if time.check_yield(counter, 10000) == 0:
                     LOG.info(f"Record Counter: {counter}")
+
             except Exception:
                 LOG.exception(f'File: {filename} - Message ID: {msg.getMsgId()} - Start: {msg.start_offset} - End: {msg.end_offset}')
                 raise
 
     except mbox.ErrInvalidFileFormat as ex:
         LOG.error(f'Invalid file format detected: {ex}')
+
+    except mbox.ErrEmptyFile as ex:
+        LOG.info(f"Detected empty file - {filename}")
 
     else:
         LOG.info(f"Detected {counter} messages in {filename}")
@@ -120,16 +123,17 @@ async def dedupper(mboxfiles, msg_hash_storage_location, use_disk_data_for_hash=
         LOG.info(f"** WARNING ** Hash Source Choice may result in different output results -- Using {'DISK' if use_disk_data_for_hash else 'PARSED'}")
 
     utc_time = datetime.datetime.utcnow()
-    output_filename_timestamp = utc_time.strftime("%Y%m%d_%H%M%S_deduplicated.mbox")
+    output_filename_timestamp = utc_time.strftime("%Y%m%d_%H%M%S%f_deduplicated.mbox")
 
     output_filename = (
         output_filename_timestamp
-        if output_base_path is not None
+        if output_base_path is None
         else os.path.join(
             output_base_path,
             output_filename_timestamp,
         )
     )
+
     LOG.info(f"Writing unique records to {output_filename}")
     with open(output_filename, "wb") as output_data:
         wcounter = 0
@@ -153,6 +157,7 @@ async def dedupper(mboxfiles, msg_hash_storage_location, use_disk_data_for_hash=
                 break
 
             wcounter = wcounter + 1
+            time.check_yield(wcounter, 1000)
     LOG.info(f'Wrote {wcounter} records')
     # close the database and free up some memory
     # it's not sent any where else so it can be safely closed now

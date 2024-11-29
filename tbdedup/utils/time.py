@@ -16,9 +16,19 @@ limitations under the License.
 
 import datetime
 import logging
+import math
+import time
 
 LOG = logging.getLogger(__name__)
 
+def do_yield():
+    time.sleep(0)
+
+def check_yield(counter, yield_count):
+    if math.fmod(counter, yield_count) == 0:
+        do_yield()
+        return True
+    return False
 
 class TimeTracker(object):
 

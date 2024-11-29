@@ -18,9 +18,13 @@ import asyncio
 import logging
 import sys
 
+#import asyncqt
+#import qasync
+
 from tbdedup import (
     combinatory,
     dedup,
+    gui,
 )
 from tbdedup.planner import (
     plan as planner_plan,
@@ -44,6 +48,9 @@ async def asyncMain():
         metavar='Log config',
     )
     subparsers = argument_parser.add_subparsers(required=True)
+
+    gui_parser = subparsers.add_parser('gui')
+    gui_parser.set_defaults(func=gui.asyncGui)
 
     dedup_parser = subparsers.add_parser('dedup')
 
@@ -157,6 +164,10 @@ async def asyncMain():
         lh = logging.StreamHandler(sys.stdout)
         lh.setLevel(logging.DEBUG)
 
+        lfmt = logging.Formatter(
+                fmt='[%(asctime)s][%(levelname)s][%(name)s/%(lineno)d][%(threadName)s][]: %(message)s',
+        )
+
         lf = logging.FileHandler('.tb-dedup.log')
         lf.setLevel(logging.DEBUG)
 
@@ -179,8 +190,14 @@ async def asyncMain():
 
 # main is a simple wrapper for the setup's console_script
 def main():
+    print(f"Args: {sys.argv}")
+    if 'gui' in sys.argv:
+        print("Detected GUI Application. Setting Qt Event Loop")
+    else:
+        print("Detected TUI Application. Using standard Python3 Asyncio Event Loop")
+
     asyncio.run(asyncMain())
 
 
 if __name__ == "__main__":
-    sys.exit(main)
+    sys.exit(main())

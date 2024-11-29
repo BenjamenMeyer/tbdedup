@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 import asyncio
+import copy
 import datetime
 import logging
 import os
@@ -45,13 +46,13 @@ async def runDedup(output_directory, plan, dedup_task, counter_update=None):
         if counter_update is not None:
             counter_update()
 
-        plan.combinatory[planner_keys.plan_location][plan_mbox] = output_file
+        plan.combinatory[planner_keys.plan_location][planner_keys.plan_mbox] = output_file
 
         plan_output_filename = os.path.join(
             output_directory,
             "plan_output.json",
         )
-        plan.combinatory[planner_keys.plan_location][plan_output_plan] = plan_output_filename
+        plan.combinatory[planner_keys.plan_location][planner_keys.plan_output_plan] = plan_output_filename
 
         json.dump_to_file(plan_output_filename, plan)
 
@@ -129,7 +130,10 @@ async def combinatory(options, mboxfiles):
             plan.combinatory = {
                 planner_keys.plan_pattern: options.limit_pattern,
                 planner_keys.plan_location: {
-                    planner_keys.plan_source: root_file,
+                    # avoid circular references - we only care about the
+                    # value here so a deep-copy is okay, and we need to
+                    # be able to output it later
+                    planner_keys.plan_source: copy.deepcopy(root_file),
                     planner_keys.plan_output: output_directory,
                 },
                 planner_keys.plan_file_map: {},
@@ -223,12 +227,23 @@ async def combinatory(options, mboxfiles):
     LOG.info(f'Arranging to move results back to Thunderbird')
 
     async def move_dedup_mbox(output_directory, plan, mboxfile):
-        pass
+        if mboxfile is None:
+            LOG.info(f'No mboxfile specified for {output_directory}')
+            return
+
+        target_directory = os.path.join(
+            output_directory,
+            plan.combinatory[planner_keys.plan_location][planner_keys.plan_source]
+        )
+        output_mbox_file = f"{target_directory}_Dedup"
+        source_mbox_file = plan.combinatory[planner_keys.plan_location][planner_keys.plan_mbox]
+        LOG.info(f'Copying {source_mbox_file} to {output_mbox_file}')
 
     for wr_output_directory, wr_plan, wr_mboxfile in worker_results:
         move_task = asyncio.create_task(
             move_dedup_mbox(
-                wr_output_directory,
+                #wr_output_directory,
+                options.location,
                 wr_plan,
                 wr_mboxfile,
             ),
@@ -247,7 +262,7 @@ async def combinatory(options, mboxfiles):
         else options.storage_location,
         "combinatory_operation.json",
     )
-    json.dump_to_file(ddata_output_file, preplan)
+    json.dump_to_file(data_output_file, preplan)
 
 
 async def asyncCombinatory(options):

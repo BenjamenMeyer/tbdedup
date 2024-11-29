@@ -14,7 +14,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import io
 import json
+
+
+def _json_dumper(obj):
+    if hasattr(obj, "__json__"):
+        return obj.__json__()
+
+    # File objects - just report the name
+    if isinstance(obj, io.IOBase):
+        return obj.name
+
+    return obj
 
 
 def dump_to_file(filename, data):
@@ -24,5 +36,6 @@ def dump_to_file(filename, data):
             json_output,
             indent=4,
             sort_keys=False,
-            default=lambda __o: __o.__json__() if hasattr(__o, "__json__") else __o
+            #default=lambda __o: __o.__json__() if hasattr(__o, "__json__") else __o
+            default=_json_dumper,
         )

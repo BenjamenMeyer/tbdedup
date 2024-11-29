@@ -21,3 +21,4 @@ Mailbox = mboxfile.Mailbox
 MailboxFolder = mboxfolder.MailboxFolder
 
 ErrInvalidFileFormat = mboxfile.ErrInvalidFileFormat
+ErrEmptyFile = mboxfile.ErrEmptyFile

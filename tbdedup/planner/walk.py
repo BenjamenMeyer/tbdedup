@@ -67,6 +67,21 @@ class Preplanner(object):
             keys.preplan_planning: {},
         }
 
+    def __json__(self):
+        return {
+            # it is not feasible to include `options` in the JSON output
+            # as it will not serialize properly; it's also not valuable
+            # to do this either
+            # "options": self.options,
+            "folder_pattern": self.folder_pattern,
+            "location": self.location,
+            "output_filename": self.output_filename,
+            "preplanner": {
+                keys.preplan_location: self.preplanner[keys.preplan_location],
+                keys.preplan_planning: self.preplanner[keys.preplan_planning],
+            }
+        }
+
     def has_file(self, root_file):
         return root_file in self.preplanner[keys.preplan_planning]
 
