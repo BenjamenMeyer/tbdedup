@@ -95,6 +95,11 @@ FROM (
 )
 """
 
+GET_TOTAL_MESSAGE_COUNT = """
+SELECT COUNT(*)
+FROM messages
+"""
+
 GET_MESSAGE_HASHES = """
 SELECT DISTINCT hashid
 FROM messages
@@ -201,6 +206,12 @@ class MessageDatabase(object):
         else:
             with self._get_db() as cursor:
                 cursor.execute(ADD_MESSAGE, params)
+
+    def get_total_message_count(self):
+        with self._get_db() as cursor:
+            result = cursor.execute(GET_TOTAL_MESSAGE_COUNT)
+            value = result.fetchone()
+            return value[0]
 
     def get_unique_message_count(self, use_disk=False):
         with self._get_db() as cursor:

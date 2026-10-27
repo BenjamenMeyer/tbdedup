@@ -154,6 +154,20 @@ async def asyncMain():
         required=False,
         help="Pattern to limit the files to if provided",
     )
+    combinatory_parser.add_argument(
+        '--output-location', '-ol',
+        default=None,
+        type=str,
+        required=False,
+        help="Target directory for the reconstructed Thunderbird folder tree",
+    )
+    combinatory_parser.add_argument(
+        '--yes', '-y',
+        default=False,
+        action='store_true',
+        required=False,
+        help="Automatically confirm moving deduplicated MBOX files without prompting",
+    )
     combinatory_parser.set_defaults(func=combinatory.asyncCombinatory)
 
     arguments = argument_parser.parse_args()

@@ -91,6 +91,7 @@ class TestMessageDatabase(base.TestCase):
             "$label2",
         )
 
+        self.assertEqual(storage.get_total_message_count(), 2)
         self.assertEqual(storage.get_unique_message_count(use_disk=False), 1)
         self.assertEqual(storage.get_unique_message_count(use_disk=True), 2)
 

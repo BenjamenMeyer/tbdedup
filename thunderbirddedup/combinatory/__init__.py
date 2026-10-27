@@ -14,12 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 import asyncio
+import contextlib
 import copy
 import datetime
 import logging
 import os
 import os.path
 import resource
+import shutil
 import tempfile
 
 from thunderbirddedup import (
@@ -39,14 +41,97 @@ from thunderbirddedup.utils import (
 
 LOG = logging.getLogger(__name__)
 
+DEFAULT_MAX_CONCURRENT_PLANS = 32
 
-async def runDedup(output_directory, plan, dedup_task, counter_update=None):
+
+def format_bytes(num_bytes):
+    value = float(num_bytes)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(value) < 1024.0 or unit == "TB":
+            return f"{value:.2f} {unit}"
+        value /= 1024.0
+
+
+def get_reconstructed_mbox_path(output_directory, folder_pattern, plan_source):
+    norm_output = output_directory.rstrip(os.sep) or os.sep
+    norm_pattern = (folder_pattern or "").rstrip("/")
+    if (
+        norm_pattern and
+        os.path.basename(norm_output) == os.path.basename(norm_pattern) and
+        plan_source.startswith(folder_pattern)
+    ):
+        relative_source = plan_source[len(folder_pattern):]
+    else:
+        relative_source = plan_source.lstrip("/")
+    return os.path.join(output_directory, relative_source)
+
+
+def collect_plan_stats(
+    plan,
+    output_file,
+    dedup_hash_storage=None,
+    use_disk_data_for_hash=False,
+):
+    source_files = len(plan.files)
+    source_bytes = sum(
+        os.path.getsize(f)
+        for f in plan.files
+        if os.path.exists(f)
+    )
+    dedup_bytes = (
+        os.path.getsize(output_file)
+        if output_file is not None and os.path.exists(output_file)
+        else 0
+    )
+    total_messages = 0
+    unique_messages = 0
+    if dedup_hash_storage is not None and os.path.exists(dedup_hash_storage):
+        storage = db.MessageDatabase(dedup_hash_storage)
+        try:
+            total_messages = storage.get_total_message_count()
+            unique_messages = storage.get_unique_message_count(
+                use_disk=use_disk_data_for_hash
+            )
+        finally:
+            storage.close()
+
+    stats = {
+        planner_keys.plan_stats_source_files: source_files,
+        planner_keys.plan_stats_source_bytes: source_bytes,
+        planner_keys.plan_stats_dedup_bytes: dedup_bytes,
+        planner_keys.plan_stats_total_messages: total_messages,
+        planner_keys.plan_stats_unique_messages: unique_messages,
+    }
+    plan.combinatory[planner_keys.plan_stats] = stats
+    return stats
+
+
+async def runDedup(
+    output_directory,
+    plan,
+    dedup_task,
+    counter_update=None,
+    semaphore=None,
+    dedup_hash_storage=None,
+    use_disk_data_for_hash=False,
+):
     try:
-        output_file = await dedup_task
+        async with (
+            semaphore
+            if semaphore is not None
+            else contextlib.nullcontext()
+        ):
+            output_file = await dedup_task
         if counter_update is not None:
             counter_update()
 
         plan.combinatory[planner_keys.plan_location][planner_keys.plan_mbox] = output_file
+        collect_plan_stats(
+            plan,
+            output_file,
+            dedup_hash_storage=dedup_hash_storage,
+            use_disk_data_for_hash=use_disk_data_for_hash,
+        )
 
         plan_output_filename = os.path.join(
             output_directory,
@@ -80,6 +165,119 @@ def get_plan_output_directory(folder_pattern, temp_directory, root_file):
     )
 
 
+def build_summary_report(
+    options,
+    temp_directory,
+    reconstructed_root,
+    worker_results,
+):
+    total_plans = len(worker_results)
+    succeeded_plans = sum(
+        1 for _, _, mboxfile in worker_results if mboxfile is not None
+    )
+    failed_plans = total_plans - succeeded_plans
+
+    total_source_files = 0
+    total_source_bytes = 0
+    total_dedup_bytes = 0
+    total_messages = 0
+    unique_messages = 0
+
+    for _, plan, _ in worker_results:
+        stats = plan.combinatory.get(planner_keys.plan_stats, {})
+        total_source_files += stats.get(planner_keys.plan_stats_source_files, 0)
+        total_source_bytes += stats.get(planner_keys.plan_stats_source_bytes, 0)
+        total_dedup_bytes += stats.get(planner_keys.plan_stats_dedup_bytes, 0)
+        total_messages += stats.get(planner_keys.plan_stats_total_messages, 0)
+        unique_messages += stats.get(planner_keys.plan_stats_unique_messages, 0)
+
+    saved_bytes = max(0, total_source_bytes - total_dedup_bytes)
+    saved_pct = (
+        (saved_bytes / total_source_bytes) * 100.0
+        if total_source_bytes > 0
+        else 0.0
+    )
+    removed_messages = max(0, total_messages - unique_messages)
+
+    lines = [
+        "=" * 72,
+        "Thunderbird Deduplication Summary",
+        "=" * 72,
+        f"Source Location:        {options.location}",
+        f"Working Directory:      {temp_directory}",
+        f"Reconstructed Target:   {reconstructed_root}",
+        f"Source MBOX Files:      {total_source_files}",
+        f"Logical Folders (Plans): {total_plans} ({succeeded_plans} succeeded, {failed_plans} failed)",
+        f"Messages Indexed:       {total_messages}",
+        f"Unique Messages Kept:   {unique_messages} ({removed_messages} duplicates removed)",
+        f"Original MBOX Size:     {format_bytes(total_source_bytes)} ({total_source_bytes} bytes)",
+        f"Deduplicated MBOX Size: {format_bytes(total_dedup_bytes)} ({total_dedup_bytes} bytes)",
+        f"Disk Space Saved:       {format_bytes(saved_bytes)} ({saved_pct:.2f}%)",
+        "=" * 72,
+    ]
+    return "\n".join(lines)
+
+
+def confirm_move(
+    options,
+    temp_directory,
+    reconstructed_root,
+    worker_results,
+):
+    summary = build_summary_report(
+        options,
+        temp_directory,
+        reconstructed_root,
+        worker_results,
+    )
+    LOG.info(f"\n{summary}")
+    print(summary)
+
+    succeeded_plans = sum(
+        1 for _, _, mboxfile in worker_results if mboxfile is not None
+    )
+    if getattr(options, "yes", False):
+        LOG.info(
+            f"Auto-confirming move of {succeeded_plans} deduplicated MBOX files to {reconstructed_root}"
+        )
+        return True
+
+    prompt = (
+        f"Proceed with moving {succeeded_plans} deduplicated MBOX files "
+        f"to '{reconstructed_root}'? [y/N]: "
+    )
+    try:
+        response = input(prompt)
+    except EOFError:
+        response = ""
+    return response.strip().lower() in ("y", "yes")
+
+
+async def move_dedup_mbox(
+    reconstructed_root,
+    folder_pattern,
+    plan,
+    mboxfile,
+):
+    if mboxfile is None:
+        LOG.info(f'No mboxfile specified for {reconstructed_root}')
+        return
+
+    plan_source = plan.combinatory[planner_keys.plan_location][planner_keys.plan_source]
+    output_mbox_file = get_reconstructed_mbox_path(
+        reconstructed_root,
+        folder_pattern,
+        plan_source,
+    )
+    source_mbox_file = plan.combinatory[planner_keys.plan_location][planner_keys.plan_mbox]
+    parent_dir = os.path.dirname(output_mbox_file)
+    if parent_dir:
+        os.makedirs(parent_dir, mode=0o755, exist_ok=True)
+    LOG.info(f'Moving {source_mbox_file} to {output_mbox_file}')
+    shutil.move(source_mbox_file, output_mbox_file)
+    plan.combinatory[planner_keys.plan_location][planner_keys.plan_final_mbox] = output_mbox_file
+
+
 async def combinatory(options, mboxfiles):
     # 1. Run the preplanner and find all the sets of files to deduplicate
     preplan = planner_walk.Preplanner(options)
@@ -103,6 +301,7 @@ async def combinatory(options, mboxfiles):
     #    temporary directory and add symlinks for each associated file
     LOG.info('Generating dedup plans...')
     dedup_workers = []
+    semaphore = asyncio.Semaphore(DEFAULT_MAX_CONCURRENT_PLANS)
 
     required_file_count = 0
 
@@ -156,7 +355,7 @@ async def combinatory(options, mboxfiles):
             #   - input SqliteDB
             #   - reporting
             #   - number of links in the data set
-            required_file_count = 3 + plan.combinatory[planner_keys.plan_counter]
+            required_file_count += 3 + plan.combinatory[planner_keys.plan_counter]
 
             # 4. Split out a async worker for each directory to deduplicate
             #    each directory data set
@@ -185,6 +384,9 @@ async def combinatory(options, mboxfiles):
                         output_base_path=plan.combinatory[planner_keys.plan_location][planner_keys.plan_output],
                     ),
                     counter_update=counter_update,
+                    semaphore=semaphore,
+                    dedup_hash_storage=dedup_hash_storage,
+                    use_disk_data_for_hash=use_disk_data_for_hash,
                 )
             )
             dedup_workers.append(dedup_task)
@@ -195,21 +397,21 @@ async def combinatory(options, mboxfiles):
 
     # Ensure there are enough file handles to support the work
     soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
-    new_soft_limit = (
-        required_file_count + 100
-        if soft_limit <= required_file_count
-        else soft_limit
-    )
     new_hard_limit = (
         required_file_count + 200
         if hard_limit <= required_file_count
         else hard_limit
     )
+    new_soft_limit = (
+        required_file_count + 100
+        if soft_limit <= required_file_count
+        else soft_limit
+    )
     LOG.info(f'Attempting to raise Open File Limit from (hard={hard_limit}, soft={soft_limit}) to (hard={new_hard_limit}, soft={new_soft_limit})')
     try:
         resource.setrlimit(
             resource.RLIMIT_NOFILE,
-            (new_soft_limit, new_hard_limit),
+            (min(new_soft_limit, hard_limit), hard_limit),
         )
     except Exception:
         LOG.exception("Failed to set new Open File Limit")
@@ -221,39 +423,34 @@ async def combinatory(options, mboxfiles):
         worker_results = await asyncio.gather(*dedup_workers)
     LOG.info('Dedup Workers completed')
 
-    # 5. Move result files back into the original data set with the
-    #    name `Dedup` appended to differentiate them.
-    move_workers = []
-    LOG.info(f'Arranging to move results back to Thunderbird')
+    # 5. Reconstruct clean Thunderbird folder tree after summary & confirmation
+    reconstructed_root = (
+        getattr(options, "output_location", None) or
+        os.path.join(temp_directory, "reconstructed")
+    )
+    if confirm_move(options, temp_directory, reconstructed_root, worker_results):
+        move_workers = []
+        LOG.info(f'Moving deduplicated MBOX files into {reconstructed_root}')
 
-    async def move_dedup_mbox(output_directory, plan, mboxfile):
-        if mboxfile is None:
-            LOG.info(f'No mboxfile specified for {output_directory}')
-            return
+        for wr_output_directory, wr_plan, wr_mboxfile in worker_results:
+            move_task = asyncio.create_task(
+                move_dedup_mbox(
+                    reconstructed_root,
+                    options.folder_pattern,
+                    wr_plan,
+                    wr_mboxfile,
+                ),
+            )
+            move_workers.append(move_task)
 
-        target_directory = os.path.join(
-            output_directory,
-            plan.combinatory[planner_keys.plan_location][planner_keys.plan_source]
+        LOG.info(f'Waiting on {len(move_workers)} to move the files')
+        with time.TimeTracker("Mover"):
+            move_worker_results = await asyncio.gather(*move_workers)
+        LOG.info('Move Workers completed')
+    else:
+        LOG.info(
+            f'Move declined; deduplicated MBOX files remain in {temp_directory}'
         )
-        output_mbox_file = f"{target_directory}_Dedup"
-        source_mbox_file = plan.combinatory[planner_keys.plan_location][planner_keys.plan_mbox]
-        LOG.info(f'Copying {source_mbox_file} to {output_mbox_file}')
-
-    for wr_output_directory, wr_plan, wr_mboxfile in worker_results:
-        move_task = asyncio.create_task(
-            move_dedup_mbox(
-                # wr_output_directory,
-                options.location,
-                wr_plan,
-                wr_mboxfile,
-            ),
-        )
-        move_workers.append(move_task)
-
-    LOG.info(f'Waiting on {len(move_workers)} to move the files')
-    with time.TimeTracker("Mover"):
-        move_worker_results = await asyncio.gather(*move_workers)
-    LOG.info('Move Workers completed')
 
     # finally write the completed operation under the output directory
     data_output_file = os.path.join(
