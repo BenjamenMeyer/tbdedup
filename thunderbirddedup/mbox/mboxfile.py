@@ -39,8 +39,8 @@ class Mailbox(object):
     mboxOMatch = re.compile(r'^From - ')
     mboxCLMatch = re.compile(r'^Content-Length:')
 
-    # Start Line: `^FROM - [DOW] [MOY] [DD] [hh]:[mm]:[ss] [yyyy]$`
-    mboxMessageStart = re.compile(r'^From - ')
+    # Start Line: `^From (-|<sender>) [DOW] [MOY] [DD] [hh]:[mm]:[ss] [yyyy]$`
+    mboxMessageStart = re.compile(r'^From\s+(?:-\s+|\S+\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+)')
     mboxHeaderStart = re.compile(r'(^[\S-]*):(.*)')
     # Likely Thunderbird specific headers:
     # X-Mozilla-Status
@@ -179,8 +179,8 @@ class Mailbox(object):
                         # LOG.info(f'Found Content Boundary Marker: "{record_boundary_marker}"')
                     except Exception:
                         LOG.info(f'Found Content Boundary Marker: RAW = "{vline_data}"')
-                        LOG.exception(f'Failed to parse boundary marker')
-                        sys.exit(1)
+                        LOG.exception('Failed to parse boundary marker')
+                        return ""
 
         return record_boundary_marker
 
@@ -244,7 +244,13 @@ class Mailbox(object):
 
                 elif len(line) == 0:
                     log_file_tracking('Found blank line', previous_file_location, file_location)
+                    if header_name != 'body' and len(header_name) > 0:
+                        lower_header_name = header_name.lower()
+                        if lower_header_name == "content-type":
+                            record_boundary_marker = self.parseBoundaryMarker(currentRecord, header_name)
+                            log_file_tracking(f'Found Content Type: {header_name}: "{currentRecord.getData(header_name)}"', previous_file_location, file_location)
                     foundBlankLine = True
+                    header_name = 'body'
                     currentRecord.addData(header_name, rawline)
                     potential_write(rawline)
 

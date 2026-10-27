@@ -39,7 +39,12 @@ SCHEMAS = [
         "version": 0,
         "changes": [
             "CREATE TABLE IF NOT EXISTS schema_version(version INT)",
-            "CREATE TABLE IF NOT EXISTS messages(hashid TEXT, diskhashid TEXT, messageid TEXT, messageid2 TEXT, hashid2 TEXT, location TEXT, startOffset INT, endOffset INT)",
+            (
+                "CREATE TABLE IF NOT EXISTS messages("
+                "hashid TEXT, diskhashid TEXT, messageid TEXT, messageid2 TEXT, hashid2 TEXT, "
+                "location TEXT, startOffset INT, endOffset INT, "
+                "mozilla_status INT, mozilla_status2 INT, mozilla_keys TEXT)"
+            ),
         ],
     },
 ]
@@ -56,8 +61,8 @@ FROM schema_version
 
 
 ADD_MESSAGE = """
-INSERT INTO messages(hashid, diskhashid, messageid, messageid2, hashid2, location, startOffset, endOffset)
-VALUES(:hashid, :diskhashid, :messageid, :messageid2, :hashid2, :location, :startOffset, :endOffset)
+INSERT INTO messages(hashid, diskhashid, messageid, messageid2, hashid2, location, startOffset, endOffset, mozilla_status, mozilla_status2, mozilla_keys)
+VALUES(:hashid, :diskhashid, :messageid, :messageid2, :hashid2, :location, :startOffset, :endOffset, :mozilla_status, :mozilla_status2, :mozilla_keys)
 """
 
 DISK_GET_UNIQUE_MESSAGE_COUNT = """
@@ -74,7 +79,7 @@ FROM messages
 """
 
 DISK_GET_MESSAGES_BY_HASH = """
-SELECT messageid, location, startOffset, endOffset, diskhashid
+SELECT messageid, location, startOffset, endOffset, diskhashid, mozilla_status, mozilla_status2, mozilla_keys
 FROM messages
 WHERE diskhashid = :diskhashid
 """
@@ -93,7 +98,7 @@ FROM messages
 """
 
 GET_MESSAGES_BY_HASH = """
-SELECT messageid, location, startOffset, endOffset, diskhashid
+SELECT messageid, location, startOffset, endOffset, diskhashid, mozilla_status, mozilla_status2, mozilla_keys
 FROM messages
 WHERE hashid = :hashid
 """
@@ -141,7 +146,20 @@ class MessageDatabase(object):
         except Exception:
             return -1
 
-    def add_message(self, msg_hash, msg_id, msg_location, msg_id2, msg_hash2, start_offset, end_offset, disk_hash):
+    def add_message(
+        self,
+        msg_hash,
+        msg_id,
+        msg_location,
+        msg_id2,
+        msg_hash2,
+        start_offset,
+        end_offset,
+        disk_hash,
+        mozilla_status=0,
+        mozilla_status2=0,
+        mozilla_keys='',
+    ):
         with self._get_db() as cursor:
             result = cursor.execute(
                 ADD_MESSAGE,
@@ -154,6 +172,9 @@ class MessageDatabase(object):
                     "location": msg_location,
                     "startOffset": start_offset,
                     "endOffset": end_offset,
+                    "mozilla_status": mozilla_status,
+                    "mozilla_status2": mozilla_status2,
+                    "mozilla_keys": mozilla_keys,
                 },
             )
 
@@ -189,7 +210,16 @@ class MessageDatabase(object):
                 else
                 "hashid"
             )
-            for msg_id, msg_location, start_offset, end_offset, disk_hashid in cursor.execute(
+            for (
+                msg_id,
+                msg_location,
+                start_offset,
+                end_offset,
+                disk_hashid,
+                mozilla_status,
+                mozilla_status2,
+                mozilla_keys,
+            ) in cursor.execute(
                 sqlquery,
                 {
                     sqlargs_key: hashid
@@ -203,4 +233,7 @@ class MessageDatabase(object):
                     "end_offset": end_offset,
                     "length": end_offset - start_offset,
                     "disk_hash": disk_hashid,
+                    "mozilla_status": mozilla_status,
+                    "mozilla_status2": mozilla_status2,
+                    "mozilla_keys": mozilla_keys,
                 }

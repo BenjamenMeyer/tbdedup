@@ -24,8 +24,25 @@ LOG = logging.getLogger(__name__)
 
 class MailboxFolder(object):
 
+    SKIP_EXTENSIONS = (
+        ".msf",
+        ".dat",
+        ".json",
+        ".sqlite",
+        ".wdseml",
+        ".html",
+        ".mboxrecord",
+    )
+
     def __init__(self, foldername):
         self.foldername = foldername
+
+    @classmethod
+    def is_skipped_file(cls, filename):
+        if filename.startswith("."):
+            return True
+        _, ext = os.path.splitext(filename)
+        return ext.lower() in cls.SKIP_EXTENSIONS
 
     async def getMboxFiles(self):
         fileResult = []
@@ -33,7 +50,7 @@ class MailboxFolder(object):
             LOG.info(f"[{root}] Found {len(dirs)} sub-directories and {len(files)} files")
             for filename in files:
                 LOG.info(f"[{root}] Found file: {filename}")
-                if "." in filename:
+                if self.is_skipped_file(filename):
                     LOG.debug(f"[{root}] Skipping file {filename}")
                     continue
                 fileResult.append(

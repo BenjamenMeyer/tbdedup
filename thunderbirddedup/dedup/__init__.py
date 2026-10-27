@@ -61,6 +61,9 @@ async def processFile(filename, storage, counter_update=None):
                     msg.start_offset,
                     msg.end_offset,
                     msg.getHash(diskHash=True),  # hash to ensure we read the right thing
+                    msg.getMozillaStatus(),
+                    msg.getMozillaStatus2(),
+                    msg.getMozillaKeys(),
                 )
                 counter = counter + 1
                 if time.check_yield(counter, 10000) == 0:
@@ -138,7 +141,13 @@ async def dedupper(mboxfiles, msg_hash_storage_location, use_disk_data_for_hash=
     with open(output_filename, "wb") as output_data:
         wcounter = 0
         for unique_hashid in storage.get_message_hashes(use_disk=use_disk_data_for_hash):
-            for msg_for_hash in storage.get_messages_by_hash(unique_hashid, use_disk=use_disk_data_for_hash):
+            msgs_for_hash = list(
+                storage.get_messages_by_hash(unique_hashid, use_disk=use_disk_data_for_hash)
+            )
+            merged_status, merged_status2, merged_keys = mbox.Message.mergeMozillaMetadata(
+                msgs_for_hash
+            )
+            for msg_for_hash in msgs_for_hash:
                 msgData = mbox.Mailbox.getMessageFromFile(msg_for_hash)
                 msgDataHasher = hashlib.sha256()
                 msgDataHasher.update(encoder.to_encoding(msgData))
@@ -150,6 +159,12 @@ async def dedupper(mboxfiles, msg_hash_storage_location, use_disk_data_for_hash=
                         msg_recorder.flush()
                     continue
 
+                msgData = mbox.Message.updateMozillaHeaders(
+                    msgData,
+                    merged_status,
+                    merged_status2,
+                    merged_keys,
+                )
                 output_data.write(msgData)
                 output_data.flush()
 

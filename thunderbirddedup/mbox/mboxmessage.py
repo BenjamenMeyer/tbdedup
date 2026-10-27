@@ -42,6 +42,13 @@ THUNDERBIRD_HEADERS = [
     'Message-ID',           # Unique Message ID
 ]
 
+MSG_FLAG_READ = 0x0001
+MSG_FLAG_REPLIED = 0x0002
+MSG_FLAG_MARKED = 0x0004
+MSG_FLAG_EXPUNGED = 0x0008
+MSG_FLAG_FORWARDED = 0x1000
+MSG_FLAG_IMAP_DELETED = 0x00200000
+
 
 class Message(object):
 
@@ -130,3 +137,121 @@ class Message(object):
         m = hashlib.sha256()
         m.update(encoder.to_encoding(idHeader))
         return m.hexdigest()
+
+    def _getHeaderValueStr(self, header_pattern):
+        matcher = re.compile(header_pattern, flags=re.I)
+        for k, v in self.headers.items():
+            if matcher.match(k):
+                raw_val = b''.join(
+                    encoder.to_encoding(part)
+                    for part in v
+                ).decode('latin1')
+                if ':' in raw_val:
+                    return raw_val.split(':', 1)[1].strip()
+                return raw_val.strip()
+        return None
+
+    def getMozillaStatus(self):
+        val = self._getHeaderValueStr(r'^X-Mozilla-Status$')
+        if val:
+            try:
+                return int(val.split()[0], 16)
+            except ValueError:
+                LOG.warning(f'Invalid X-Mozilla-Status value: {val}')
+        return 0
+
+    def getMozillaStatus2(self):
+        val = self._getHeaderValueStr(r'^X-Mozilla-Status2$')
+        if val:
+            try:
+                return int(val.split()[0], 16)
+            except ValueError:
+                LOG.warning(f'Invalid X-Mozilla-Status2 value: {val}')
+        return 0
+
+    def getMozillaKeys(self):
+        val = self._getHeaderValueStr(r'^X-Mozilla-Keys$')
+        if val:
+            return ' '.join(val.split())
+        return ''
+
+    @staticmethod
+    def mergeMozillaMetadata(messages):
+        merged_status = 0
+        merged_status2 = 0
+        seen_keys = []
+        for msg in messages:
+            merged_status |= (msg.get('mozilla_status') or 0)
+            merged_status2 |= (msg.get('mozilla_status2') or 0)
+            raw_keys = msg.get('mozilla_keys') or ''
+            for tag in raw_keys.split():
+                if tag not in seen_keys:
+                    seen_keys.append(tag)
+
+        merged_status &= ~MSG_FLAG_EXPUNGED
+        merged_status2 &= ~MSG_FLAG_IMAP_DELETED
+        return (
+            merged_status,
+            merged_status2,
+            ' '.join(seen_keys),
+        )
+
+    @staticmethod
+    def updateMozillaHeaders(raw_bytes, status, status2, keys):
+        status_re = re.compile(rb'^(X-Mozilla-Status:\s*)([0-9a-fA-F]+)(\r?\n)$', re.I)
+        status2_re = re.compile(rb'^(X-Mozilla-Status2:\s*)([0-9a-fA-F]+)(\r?\n)$', re.I)
+        keys_re = re.compile(rb'^(X-Mozilla-Keys:)([^\r\n]*)(\r?\n)$', re.I)
+
+        lines = raw_bytes.splitlines(keepends=True)
+        if not lines:
+            return raw_bytes
+
+        eol = b'\r\n' if lines[0].endswith(b'\r\n') else b'\n'
+        found_status = False
+        found_status2 = False
+        found_keys = False
+
+        for idx, line in enumerate(lines):
+            if idx == 0:
+                continue
+            if line in (b'\n', b'\r\n'):
+                break
+            m_status = status_re.match(line)
+            if m_status:
+                found_status = True
+                prefix, old_val, line_eol = m_status.groups()
+                width = max(4, len(old_val))
+                new_val = f'{status:0{width}x}'.encode('ascii')
+                lines[idx] = prefix + new_val + line_eol
+                continue
+            m_status2 = status2_re.match(line)
+            if m_status2:
+                found_status2 = True
+                prefix, old_val, line_eol = m_status2.groups()
+                width = max(8, len(old_val))
+                new_val = f'{status2:0{width}x}'.encode('ascii')
+                lines[idx] = prefix + new_val + line_eol
+                continue
+            m_keys = keys_re.match(line)
+            if m_keys:
+                found_keys = True
+                if keys:
+                    prefix, old_val, line_eol = m_keys.groups()
+                    encoded_keys = b' ' + keys.encode('latin1')
+                    if len(old_val) > len(encoded_keys):
+                        encoded_keys = encoded_keys.ljust(len(old_val), b' ')
+                    lines[idx] = prefix + encoded_keys + line_eol
+                continue
+
+        insert_headers = []
+        if not found_status and status:
+            insert_headers.append(f'X-Mozilla-Status: {status:04x}'.encode('ascii') + eol)
+        if not found_status2 and status2:
+            insert_headers.append(f'X-Mozilla-Status2: {status2:08x}'.encode('ascii') + eol)
+        if not found_keys and keys:
+            insert_headers.append(b'X-Mozilla-Keys: ' + keys.encode('latin1') + eol)
+
+        if insert_headers:
+            lines[1:1] = insert_headers
+
+        return b''.join(lines)

@@ -55,7 +55,7 @@ class TestMboxFolder(base.AsyncioTestCase):
                             location,
                             f"{index:030}"
                             if not with_period
-                            else f"{index:030}.{index:2}",
+                            else f"{index:030}.msf",
                         )
                         with open(fname, "wt") as foutput:
                             foutput.write(f"data for {index:030}")
@@ -100,3 +100,19 @@ class TestMboxFolder(base.AsyncioTestCase):
             mf = mboxfolder.MailboxFolder(the_cwd)
             allfiles = await mf.getMboxFiles()
             self.assertEqual(len(allfiles), len(generated_files))
+
+    async def test_get_mbox_files_with_dots_in_folder_name(self):
+        with base.KeepLocalDirClean() as cwd:
+            the_cwd = cwd.temp_dir.name
+            mbox_with_dot = os.path.join(the_cwd, "v1.0")
+            msf_with_dot = os.path.join(the_cwd, "v1.0.msf")
+            hidden_file = os.path.join(the_cwd, ".hidden")
+            dat_file = os.path.join(the_cwd, "msgFilterRules.dat")
+
+            for fpath in (mbox_with_dot, msf_with_dot, hidden_file, dat_file):
+                with open(fpath, "wt") as foutput:
+                    foutput.write("data")
+
+            mf = mboxfolder.MailboxFolder(the_cwd)
+            allfiles = await mf.getMboxFiles()
+            self.assertEqual(allfiles, [mbox_with_dot])

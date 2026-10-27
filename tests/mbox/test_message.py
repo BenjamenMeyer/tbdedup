@@ -156,7 +156,7 @@ class TestMboxMessage(base.TestCase):
         False,
         True,
     )
-    def test_get_message_id_header(self, is_valid):
+    def test_get_message_id_header_hash(self, is_valid):
         rawLines = ["FROM Jan 2024",]
         msg = mboxmessage.Message(0, rawLines[0], 0)
         byteMsgId = b'gorilla gang'
@@ -174,6 +174,99 @@ class TestMboxMessage(base.TestCase):
         m.update(encoder.to_encoding(msg.getMessageIDHeader()))
 
         self.assertEqual(result, m.hexdigest())
+
+    @ddt.data(
+        (None, 0),
+        (b"X-Mozilla-Status: 0009\r\n", 0x0009),
+        (b"0015", 0x0015),
+        (b"X-Mozilla-Status: invalid\r\n", 0),
+    )
+    @ddt.unpack
+    def test_get_mozilla_status(self, header_val, expected_status):
+        msg = mboxmessage.Message(0, b"From - Mon Jan 01 00:00:00 2024\r\n", 0)
+        if header_val is not None:
+            msg.addData("X-Mozilla-Status", header_val)
+        self.assertEqual(msg.getMozillaStatus(), expected_status)
+
+    @ddt.data(
+        (None, 0),
+        (b"X-Mozilla-Status2: 00200000\r\n", 0x00200000),
+        (b"10000000", 0x10000000),
+        (b"X-Mozilla-Status2: nothex\r\n", 0),
+    )
+    @ddt.unpack
+    def test_get_mozilla_status2(self, header_val, expected_status2):
+        msg = mboxmessage.Message(0, b"From - Mon Jan 01 00:00:00 2024\r\n", 0)
+        if header_val is not None:
+            msg.addData("X-Mozilla-Status2", header_val)
+        self.assertEqual(msg.getMozillaStatus2(), expected_status2)
+
+    @ddt.data(
+        (None, ""),
+        (b"X-Mozilla-Keys:   $label1   $label2  \r\n", "$label1 $label2"),
+        (b"X-Mozilla-Keys:                                \r\n", ""),
+    )
+    @ddt.unpack
+    def test_get_mozilla_keys(self, header_val, expected_keys):
+        msg = mboxmessage.Message(0, b"From - Mon Jan 01 00:00:00 2024\r\n", 0)
+        if header_val is not None:
+            msg.addData("X-Mozilla-Keys", header_val)
+        self.assertEqual(msg.getMozillaKeys(), expected_keys)
+
+    def test_merge_and_update_mozilla_headers(self):
+        messages = [
+            {
+                "mozilla_status": 0x0009,  # Read | Expunged
+                "mozilla_status2": 0x00200000,  # IMAPDeleted
+                "mozilla_keys": "$label1 important",
+            },
+            {
+                "mozilla_status": 0x0006,  # Replied | Marked
+                "mozilla_status2": 0x10000000,  # Attachment
+                "mozilla_keys": "important $label2",
+            },
+        ]
+        status, status2, keys = mboxmessage.Message.mergeMozillaMetadata(messages)
+        # 0x0009 | 0x0006 = 0x000f; clearing 0x0008 -> 0x0007 (Read | Replied | Marked)
+        self.assertEqual(status, 0x0007)
+        # 0x00200000 | 0x10000000 -> clearing 0x00200000 -> 0x10000000
+        self.assertEqual(status2, 0x10000000)
+        self.assertEqual(keys, "$label1 important $label2")
+
+        raw_msg = (
+            b"From - Mon Jan 01 00:00:00 2024\r\n"
+            b"X-Mozilla-Status: 0009\r\n"
+            b"X-Mozilla-Status2: 00200000\r\n"
+            b"X-Mozilla-Keys:                                         \r\n"
+            b"Subject: Test\r\n"
+            b"\r\n"
+            b"X-Mozilla-Status: 9999\r\n"
+            b"Body text\r\n"
+        )
+        updated = mboxmessage.Message.updateMozillaHeaders(raw_msg, status, status2, keys)
+        self.assertIn(b"X-Mozilla-Status: 0007\r\n", updated)
+        self.assertIn(b"X-Mozilla-Status2: 10000000\r\n", updated)
+        self.assertIn(b"X-Mozilla-Keys: $label1 important $label2", updated)
+        # Ensure body line looking like X-Mozilla-Status was not modified
+        self.assertIn(b"\r\n\r\nX-Mozilla-Status: 9999\r\n", updated)
+
+        # Also test when the first copy came from an IMAP move and lacked X-Mozilla-* headers
+        raw_imap_msg = (
+            b"From - Mon Jan 01 00:00:00 2024\n"
+            b"Subject: IMAP Moved\n"
+            b"\n"
+            b"Body text\n"
+        )
+        updated_imap = mboxmessage.Message.updateMozillaHeaders(
+            raw_imap_msg,
+            status,
+            status2,
+            keys,
+        )
+        self.assertIn(b"X-Mozilla-Status: 0007\n", updated_imap)
+        self.assertIn(b"X-Mozilla-Status2: 10000000\n", updated_imap)
+        self.assertIn(b"X-Mozilla-Keys: $label1 important $label2\n", updated_imap)
+        self.assertEqual(mboxmessage.Message.updateMozillaHeaders(b"", status, status2, keys), b"")
 
     def test_get_hash(self):
         rawLines = ["FROM Jan 2024",]

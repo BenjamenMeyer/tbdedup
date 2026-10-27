@@ -16,9 +16,11 @@ limitations under the License.
 
 from . import mboxfile
 from . import mboxfolder
+from . import mboxmessage
 
 Mailbox = mboxfile.Mailbox
 MailboxFolder = mboxfolder.MailboxFolder
+Message = mboxmessage.Message
 
 ErrInvalidFileFormat = mboxfile.ErrInvalidFileFormat
 ErrEmptyFile = mboxfile.ErrEmptyFile
