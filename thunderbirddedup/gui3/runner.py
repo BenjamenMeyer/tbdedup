@@ -4,11 +4,13 @@ from PyQt5.QtCore import (
     pyqtSignal,
 )
 
+
 class RunnerSignals(QObject):
     finished = pyqtSignal()
-    error = pyqtSignal(tuple) # tuple on error
+    error = pyqtSignal(tuple)  # tuple on error
     result = pyqtSignal(object)
     progress = pyqtSignal(int)
+
 
 class Runner(QRunnable):
     def __init__(self, fn, *args, **kwargs):
@@ -25,7 +27,7 @@ class Runner(QRunnable):
                 *self.args,
                 **self.kwargs,
             )
-        except:
+        except Exception:
             traceback.print_exc()
             exctype, value = sys.exc_info()[:2]
             self.signals.error.emit((exctype, value, traceback.format_exc()))

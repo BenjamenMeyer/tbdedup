@@ -186,15 +186,14 @@ class Mailbox(object):
 
     def buildSummary(self):
         with open(self.filename, 'rb') as data_input:
-            data_input.seek(0, 2) # move to the end of the file
+            data_input.seek(0, 2)  # move to the end of the file
             file_length = data_input.tell()
-            data_input.seek(0, 0) # move back to the start of the file
+            data_input.seek(0, 0)  # move back to the start of the file
             if not file_length:
                 # no data in the file
                 msg = f'{self.filename} is empty'
                 LOG.debug(msg)
                 raise ErrEmptyFile(msg)
-
 
             recordIndex = 0
             recordCounter = 0
@@ -346,9 +345,9 @@ class Mailbox(object):
     @classmethod
     def getMessageFromFile(cls, msgData) -> bytes:
         with open(msgData['location'], 'rb') as data_input:
-            data_input.seek(0, 2) # move to the end of the file
+            data_input.seek(0, 2)  # move to the end of the file
             file_length = data_input.tell()
-            data_input.seek(0, 0) # move back to the start of the file
+            data_input.seek(0, 0)  # move back to the start of the file
             if not file_length:
                 # file is empty so return an empty array
                 return b''

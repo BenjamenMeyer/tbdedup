@@ -19,11 +19,12 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import (
     QDir,
 )
-#from PySide6.QtAsyncio as QtAsyncio
+# from PySide6.QtAsyncio as QtAsyncio
 
-from tbdedup.gui import (
+from thunderbirddedup.gui import (
     searcher,
 )
+
 
 class MainWindow(QMainWindow):
 
@@ -70,7 +71,7 @@ class MainWindow(QMainWindow):
             self,
             "Select Path",
             os.environ.get("HOME", "/"),
-            QFileDialog.ExistingFile|QFileDialog.ShowDirsOnly|QFileDialog.DontResolveSymlinks|QDir.Hidden,
+            QFileDialog.ExistingFile | QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks | QDir.Hidden,
         )
         if folder_path:
             print(f"New folder: {folder_path}")

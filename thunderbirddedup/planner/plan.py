@@ -20,14 +20,14 @@ import os
 import os.path
 import re
 
-from tbdedup import (
+from thunderbirddedup import (
     mbox,
 )
 from . import (
     keys,
     output,
 )
-from tbdedup.utils import (
+from thunderbirddedup.utils import (
     json,
     time,
 )

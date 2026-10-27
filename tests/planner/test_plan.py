@@ -22,7 +22,7 @@ import random
 import tempfile
 from unittest import mock
 
-from tbdedup.planner import (
+from thunderbirddedup.planner import (
     keys,
     plan,
 )

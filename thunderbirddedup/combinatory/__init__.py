@@ -22,17 +22,17 @@ import os.path
 import resource
 import tempfile
 
-from tbdedup import (
+from thunderbirddedup import (
     db,
     dedup,
     mbox,
 )
-from tbdedup.planner import (
+from thunderbirddedup.planner import (
     keys as planner_keys,
     plan as planner_plan,
     walk as planner_walk,
 )
-from tbdedup.utils import (
+from thunderbirddedup.utils import (
     json,
     time,
 )
@@ -94,7 +94,7 @@ async def combinatory(options, mboxfiles):
     utc_time = datetime.datetime.utcnow()
     temp_directory = tempfile.mkdtemp(
         prefix=utc_time.strftime("%Y%m%d_%H%M%S"),
-        suffix='tbdedup',
+        suffix='thunderbirddedup',
         dir=options.storage_location,
     )
     LOG.info(f'Using Temporary Directory {temp_directory}')
@@ -242,7 +242,7 @@ async def combinatory(options, mboxfiles):
     for wr_output_directory, wr_plan, wr_mboxfile in worker_results:
         move_task = asyncio.create_task(
             move_dedup_mbox(
-                #wr_output_directory,
+                # wr_output_directory,
                 options.location,
                 wr_plan,
                 wr_mboxfile,

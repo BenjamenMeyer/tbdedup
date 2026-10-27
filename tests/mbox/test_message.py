@@ -18,8 +18,8 @@ import hashlib
 import re
 from unittest import mock
 
-from tbdedup.mbox import mboxmessage
-from tbdedup.utils import encoder
+from thunderbirddedup.mbox import mboxmessage
+from thunderbirddedup.utils import encoder
 
 from tests import base
 

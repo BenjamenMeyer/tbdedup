@@ -36,6 +36,6 @@ def dump_to_file(filename, data):
             json_output,
             indent=4,
             sort_keys=False,
-            #default=lambda __o: __o.__json__() if hasattr(__o, "__json__") else __o
+            # default=lambda __o: __o.__json__() if hasattr(__o, "__json__") else __o
             default=_json_dumper,
         )

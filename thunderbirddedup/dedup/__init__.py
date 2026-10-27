@@ -19,12 +19,12 @@ import hashlib
 import logging
 import os.path
 
-from tbdedup import (
+from thunderbirddedup import (
     db,
     mbox,
 )
 
-from tbdedup.utils import (
+from thunderbirddedup.utils import (
     encoder,
     time,
 )

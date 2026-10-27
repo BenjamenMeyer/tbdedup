@@ -19,7 +19,7 @@ import random
 import tempfile
 import unittest
 
-from tbdedup.mbox import mboxfile
+from thunderbirddedup.mbox import mboxfile
 
 
 class TestCase(unittest.TestCase):

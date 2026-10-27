@@ -16,7 +16,7 @@ limitations under the License.
 import datetime
 import time as pytime
 
-from tbdedup.utils import time
+from thunderbirddedup.utils import time
 
 from tests import base
 

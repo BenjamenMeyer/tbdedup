@@ -17,7 +17,7 @@ import hashlib
 import re
 import logging
 
-from tbdedup.utils import encoder
+from thunderbirddedup.utils import encoder
 
 LOG = logging.getLogger(__name__)
 

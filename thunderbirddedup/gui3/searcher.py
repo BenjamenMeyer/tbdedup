@@ -6,19 +6,21 @@ from PyQt5.QtCore import (
     pyqtSignal,
 )
 
-from tbdedup.mbox import (
+from thunderbirddedup.mbox import (
     MailboxFolder,
 )
-from tbdedup.gui.runner import (
+from thunderbirddedup.gui.runner import (
     Runner,
 )
+
 
 class ErrSearchAlreadyInProgress(Exception):
     pass
 
+
 class Searcher(QObject):
 
-    progress = pyqtSignal(int) 
+    progress = pyqtSignal(int)
     completed = pyqtSignal()
 
     def __init__(self):

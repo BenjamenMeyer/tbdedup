@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+
 class MainWindow(QMainWindow):
 
     def __init__(self):

@@ -18,10 +18,10 @@ import ddt
 import os
 import os.path
 
-from tbdedup import (
+from thunderbirddedup import (
     db
 )
-from tbdedup.mbox import (
+from thunderbirddedup.mbox import (
     mboxfile,
     mboxmessage,
 )

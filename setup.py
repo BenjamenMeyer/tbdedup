@@ -18,11 +18,10 @@ from setuptools import setup, find_packages
 
 REQUIRES = [
     'mailbox',
-    #'asyncqt',
-    #'qasync',
-    #'PySide6',
-    'asyncSlot',
-    'PyQt5',
+    'asyncslot',
+    'PySide6',
+    'aiotkinter',
+    'kivy',
 ]
 EXTRA_REQUIRES = {
 }
@@ -39,12 +38,15 @@ setup(
     extras_require=EXTRA_REQUIRES,
     entry_points={
         'console_scripts': [
-            'tb-dedup=tbdedup.cmd:main',
-            'tb-dedup-gui=tbdedup.gui2:main',
+            'tb-dedup=thunderbirddedup.cmd:main',
+            # 'tb-dedup-gui=thunderbirddedup.gui:main',
+            'tb-dedup-gui=thunderbirddedup.gui4:main',
+            'tb-dedup-gui2=thunderbirddedup.gui5:main',
+            'tb-dedup-gui3=thunderbirddedup.gui3:main',
         ],
     },
-    test_suite='tbdedup',
-    packages=find_packages(exclude=['tests*', 'tbdedup/tests']),
+    test_suite='thunderbirddedup',
+    packages=find_packages(exclude=['tests*', 'thunderbirddedup/tests']),
     zip_safe=True,
     classifiers=[
         "Intended Audience :: End Users/Desktop",

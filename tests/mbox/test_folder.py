@@ -19,7 +19,7 @@ import os.path
 import random
 from unittest import mock
 
-from tbdedup.mbox import mboxfolder
+from thunderbirddedup.mbox import mboxfolder
 
 from tests import base
 

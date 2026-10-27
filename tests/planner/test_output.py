@@ -17,7 +17,7 @@ import ddt
 import datetime
 from unittest import mock
 
-from tbdedup.planner import output
+from thunderbirddedup.planner import output
 
 from tests import base
 
@@ -102,7 +102,7 @@ class TestPlannerOutput(base.TestCase):
         expected_output, expected_exception
     ):
         with mock.patch(
-            "tbdedup.planner.output.utcnow"
+            "thunderbirddedup.planner.output.utcnow"
         ) as mock_time:
             mock_time.return_value = input_time
             with mock.patch(
@@ -157,7 +157,7 @@ class TestPlannerOutput(base.TestCase):
         expected_output, expected_exception
     ):
         with mock.patch(
-            "tbdedup.planner.output.utcnow"
+            "thunderbirddedup.planner.output.utcnow"
         ) as mock_time:
             mock_time.return_value = input_time
             with mock.patch(

@@ -19,17 +19,18 @@ import os
 import os.path
 from unittest import mock
 
-from tbdedup import (
+from thunderbirddedup import (
     db,
     dedup,
     mbox,
 )
-from tbdedup.mbox import (
+from thunderbirddedup.mbox import (
     mboxfile,
     mboxmessage,
 )
 
 from tests import base
+
 
 class MockStorage(object):
     def __init__(self, side_effect):
@@ -38,6 +39,7 @@ class MockStorage(object):
     def add_message(self, *args, **kwargs):
         if self.side_effect:
             raise self.side_effect
+
 
 @ddt.ddt
 class TestDeduplicator(base.AsyncioTestCase):
@@ -77,7 +79,7 @@ class TestDeduplicator(base.AsyncioTestCase):
         )
 
         with mock.patch(
-            'tbdedup.dedup.mbox.Mailbox.buildSummary',
+            'thunderbirddedup.dedup.mbox.Mailbox.buildSummary',
         ) as mock_mbox_mailbox:
             msgs = []
             for index in range(msg_count):
@@ -92,7 +94,6 @@ class TestDeduplicator(base.AsyncioTestCase):
             mock_storage = mock.Mock()
             mock_storage.add_message = mock.Mock()
             mock_storage.add_message.side_effect = storage_side_effect
-
 
             filename = 'foo'
             await dedup.processFile(filename, mock_storage, counter_update)
@@ -118,14 +119,14 @@ class TestDeduplicator(base.AsyncioTestCase):
                         datetime.timedelta(days=index)
                     )
                     # MBox Marker
-                    # Start Line: `^FROM - [DOW] [MOY] [DD] [hh]:[mm]:[ss] [yyyy]$`
-                    print(f'FROM - {dt.strftime("%a %b %d %H:%M:%S %Y")}')
+                    # Start Line: `^From - [DOW] [MOY] [DD] [hh]:[mm]:[ss] [yyyy]$`
+                    print(f'From - {dt.strftime("%a %b %d %H:%M:%S %Y")}', file=mbox_file)
                     # write a few email headers
                     print('X-Mozilla-Status: 0001', file=mbox_file)
                     print('X-Mozilla-Status2: 00000000', file=mbox_file)
                     print(f'X-Apprently-To: foo@bar.com; {dt.strftime("%a, %d %b %Y %H:%M:%S +0000")}', file=mbox_file)
                     print('To: <foo@bar.com>', file=mbox_file)
-                    print('Date: {dt.strftime("%a, %d %b %Y %H:%M:%S +0000")}', file=mbox_file)
+                    print(f'Date: {dt.strftime("%a, %d %b %Y %H:%M:%S +0000")}', file=mbox_file)
                     email_data = f"""
                     Hello, World!
                     - Foo{index:02}
@@ -141,6 +142,9 @@ class TestDeduplicator(base.AsyncioTestCase):
                 mbox_files,
                 hash_storage_location,
                 use_disk_data_for_hash,
-                cwd,
+                cwd.temp_dir.name,
             )
-            # how to check the result?
+            self.assertTrue(os.path.isfile(output_filename))
+            output_box = mboxfile.Mailbox(None, output_filename)
+            output_msgs = list(output_box.buildSummary())
+            self.assertEqual(len(output_msgs), msg_count)

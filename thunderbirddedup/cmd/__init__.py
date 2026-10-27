@@ -18,15 +18,15 @@ import asyncio
 import logging
 import sys
 
-#import asyncqt
-#import qasync
+# import asyncqt
+# import qasync
 
-from tbdedup import (
+from thunderbirddedup import (
     combinatory,
     dedup,
     gui,
 )
-from tbdedup.planner import (
+from thunderbirddedup.planner import (
     plan as planner_plan,
     walk as planner_walk,
 )
@@ -165,7 +165,7 @@ async def asyncMain():
         lh.setLevel(logging.DEBUG)
 
         lfmt = logging.Formatter(
-                fmt='[%(asctime)s][%(levelname)s][%(name)s/%(lineno)d][%(threadName)s][]: %(message)s',
+            fmt='[%(asctime)s][%(levelname)s][%(name)s/%(lineno)d][%(threadName)s][]: %(message)s',
         )
 
         lf = logging.FileHandler('.tb-dedup.log')

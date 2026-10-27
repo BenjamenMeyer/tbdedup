@@ -15,7 +15,7 @@ limitations under the License.
 """
 import ddt
 
-from tbdedup.utils import encoder
+from thunderbirddedup.utils import encoder
 
 from tests import base
 
