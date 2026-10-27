@@ -16,6 +16,7 @@ limitations under the License.
 import argparse
 import asyncio
 import logging
+import logging.config
 import sys
 
 # import asyncqt
@@ -24,7 +25,6 @@ import sys
 from thunderbirddedup import (
     combinatory,
     dedup,
-    gui,
 )
 from thunderbirddedup.planner import (
     plan as planner_plan,
@@ -32,6 +32,11 @@ from thunderbirddedup.planner import (
 )
 
 LOG = logging.getLogger(__name__)
+
+
+async def asyncGui(options):
+    from thunderbirddedup import gui
+    return await gui.asyncGui(options)
 
 
 async def asyncMain():
@@ -50,7 +55,7 @@ async def asyncMain():
     subparsers = argument_parser.add_subparsers(required=True)
 
     gui_parser = subparsers.add_parser('gui')
-    gui_parser.set_defaults(func=gui.asyncGui)
+    gui_parser.set_defaults(func=asyncGui)
 
     dedup_parser = subparsers.add_parser('dedup')
 

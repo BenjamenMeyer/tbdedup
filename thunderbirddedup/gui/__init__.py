@@ -23,6 +23,10 @@ from PySide6.QtWidgets import (
 from thunderbirddedup.gui import app
 
 
+async def asyncGui(options):
+    pass
+
+
 def main():
     the_app = QApplication(sys.argv)
     w = app.MainWindow()

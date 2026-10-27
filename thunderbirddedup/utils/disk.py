@@ -19,8 +19,8 @@ import os.path
 
 class DiskTracker(object):
 
-    def __init__(base):
-        self.base = base
+    def __init__(self, base):
+        self.base = base.rstrip(os.sep)
         self.items = {}
 
     def __getitem__(self, key):
@@ -39,7 +39,7 @@ class DiskTracker(object):
         return len(self.items)
 
     def __length_hint__(self):
-        return self.items.__length_hint__()
+        return len(self.items)
 
     def __contains__(self, item):
         return self.items.__contains__(item)
@@ -48,10 +48,21 @@ class DiskTracker(object):
         return item.startswith(self.base + os.sep)
 
     def add_file(self, filename):
+        if not self.in_dir(filename):
+            return False
+
         base = os.path.basename(filename)
         root = os.path.dirname(filename)
+        if root == self.base:
+            self.items[base] = filename
+            return True
+
+        self.add_dir(root)
+        child_dir_name = root[len(self.base + os.sep):].split(os.sep)[0]
+        return self.items[child_dir_name + os.sep].add_file(filename)
 
     def add_dir(self, dirname):
+        dirname = dirname.rstrip(os.sep)
         # ensure that dirname is under self.base
         if not self.in_dir(dirname):
             return False
@@ -61,29 +72,19 @@ class DiskTracker(object):
 
         # direct subdirectory
         if root == self.base:
-            if base in self.items:
+            key = base + os.sep
+            if key in self.items:
                 # already in the tree
-                return
+                return True
 
-            self.items[base + os.sep] = DiskTracker(dirname)
-        else:  # it's somewhere down the tree
-            while True:
-                child_name = root[len(self.base + os.sep):].split(os.sep)[0]
-                if child_name in self.items:
-                    self.items[child_name].add_dir(dirname)
-                    break
-                else:
-                    pass
+            self.items[key] = DiskTracker(dirname)
+            return True
 
-        """
-        parent = (
-            self.items[root]
-            if root in self.items
-            else None
-        )
-        if parent is None:
-            pass
-        else:
-            #self.items[dirname].
-            pass
-        """
+        # somewhere down the tree
+        child_dir_name = root[len(self.base + os.sep):].split(os.sep)[0]
+        child_key = child_dir_name + os.sep
+        if child_key not in self.items:
+            self.items[child_key] = DiskTracker(
+                os.path.join(self.base, child_dir_name)
+            )
+        return self.items[child_key].add_dir(dirname)
