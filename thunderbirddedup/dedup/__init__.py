@@ -1,5 +1,5 @@
 """
-Copyright 2023 Benjamen R. Meyer
+Copyright 2023-2026 Benjamen R. Meyer
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -50,28 +50,29 @@ async def processFile(filename, storage, counter_update=None):
     counter = 0
     try:
         LOG.info(f'Processing records...')
-        for msg in box.buildSummary():
-            try:
-                storage.add_message(
-                    msg.getHash(diskHash=False),  # hash for comparisons
-                    msg.getMsgId(),  # id
-                    filename,  # location
-                    msg.getMessageIDHeader(),  # 2nd id from the headers
-                    msg.getMessageIDHeaderHash(),  # 2nd hash
-                    msg.start_offset,
-                    msg.end_offset,
-                    msg.getHash(diskHash=True),  # hash to ensure we read the right thing
-                    msg.getMozillaStatus(),
-                    msg.getMozillaStatus2(),
-                    msg.getMozillaKeys(),
-                )
-                counter = counter + 1
-                if time.check_yield(counter, 10000) == 0:
-                    LOG.info(f"Record Counter: {counter}")
+        with storage.transaction():
+            for msg in box.buildSummary():
+                try:
+                    storage.add_message(
+                        msg.getHash(diskHash=False),  # hash for comparisons
+                        msg.getMsgId(),  # id
+                        filename,  # location
+                        msg.getMessageIDHeader(),  # 2nd id from the headers
+                        msg.getMessageIDHeaderHash(),  # 2nd hash
+                        msg.start_offset,
+                        msg.end_offset,
+                        msg.getHash(diskHash=True),  # hash to ensure we read the right thing
+                        msg.getMozillaStatus(),
+                        msg.getMozillaStatus2(),
+                        msg.getMozillaKeys(),
+                    )
+                    counter = counter + 1
+                    if time.check_yield(counter, 10000) == 0:
+                        LOG.info(f"Record Counter: {counter}")
 
-            except Exception:
-                LOG.exception(f'File: {filename} - Message ID: {msg.getMsgId()} - Start: {msg.start_offset} - End: {msg.end_offset}')
-                raise
+                except Exception:
+                    LOG.exception(f'File: {filename} - Message ID: {msg.getMsgId()} - Start: {msg.start_offset} - End: {msg.end_offset}')
+                    raise
 
     except mbox.ErrInvalidFileFormat as ex:
         LOG.error(f'Invalid file format detected: {ex}')

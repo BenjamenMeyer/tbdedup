@@ -1,5 +1,5 @@
 """
-Copyright 2023 Benjamen R. Meyer
+Copyright 2023-2026 Benjamen R. Meyer
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ Table 1:
   set no actual difference between the two could be observed in the output data. Therefore it is recommended at this time
   that the non-disk hash is used as it results in the smaller data set.
 """
+import contextlib
 import logging
 import sqlite3
 
@@ -45,6 +46,8 @@ SCHEMAS = [
                 "location TEXT, startOffset INT, endOffset INT, "
                 "mozilla_status INT, mozilla_status2 INT, mozilla_keys TEXT)"
             ),
+            "CREATE INDEX IF NOT EXISTS idx_messages_hashid ON messages(hashid)",
+            "CREATE INDEX IF NOT EXISTS idx_messages_diskhashid ON messages(diskhashid)",
         ],
     },
 ]
@@ -109,6 +112,7 @@ class MessageDatabase(object):
     def __init__(self, storageLocation):
         self._db = None
         self._location = storageLocation
+        self._in_transaction = False
         self.init()
 
     def close(self):
@@ -130,6 +134,10 @@ class MessageDatabase(object):
                 with self._db as cursor:
                     for change in version_schema["changes"]:
                         cursor.execute(change)
+                    cursor.execute(
+                        ADD_SCHEMA_VERSION,
+                        {"version": version_schema["version"]},
+                    )
                     cursor.commit()
 
     def _get_db(self):
@@ -137,11 +145,26 @@ class MessageDatabase(object):
             self.init()
         return self._db
 
+    @contextlib.contextmanager
+    def transaction(self):
+        db = self._get_db()
+        if self._in_transaction:
+            yield db
+            return
+        self._in_transaction = True
+        try:
+            with db:
+                yield db
+        finally:
+            self._in_transaction = False
+
     def get_schema_version(self):
         try:
             with self._get_db() as cursor:
                 result = cursor.execute(GET_SCHEMA_VERSION)
                 values = result.fetchone()
+                if values is None or values[0] is None:
+                    return -1
                 return values[0]
         except Exception:
             return -1
@@ -160,23 +183,24 @@ class MessageDatabase(object):
         mozilla_status2=0,
         mozilla_keys='',
     ):
-        with self._get_db() as cursor:
-            result = cursor.execute(
-                ADD_MESSAGE,
-                {
-                    "hashid": msg_hash,
-                    "diskhashid": disk_hash,
-                    "messageid": msg_id,
-                    "messageid2": msg_id2,
-                    "hashid2": msg_hash2,
-                    "location": msg_location,
-                    "startOffset": start_offset,
-                    "endOffset": end_offset,
-                    "mozilla_status": mozilla_status,
-                    "mozilla_status2": mozilla_status2,
-                    "mozilla_keys": mozilla_keys,
-                },
-            )
+        params = {
+            "hashid": msg_hash,
+            "diskhashid": disk_hash,
+            "messageid": msg_id,
+            "messageid2": msg_id2,
+            "hashid2": msg_hash2,
+            "location": msg_location,
+            "startOffset": start_offset,
+            "endOffset": end_offset,
+            "mozilla_status": mozilla_status,
+            "mozilla_status2": mozilla_status2,
+            "mozilla_keys": mozilla_keys,
+        }
+        if self._in_transaction:
+            self._get_db().execute(ADD_MESSAGE, params)
+        else:
+            with self._get_db() as cursor:
+                cursor.execute(ADD_MESSAGE, params)
 
     def get_unique_message_count(self, use_disk=False):
         with self._get_db() as cursor:

@@ -1,5 +1,5 @@
 """
-Copyright 2023 Benjamen R. Meyer
+Copyright 2023-2026 Benjamen R. Meyer
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -92,7 +92,7 @@ class TestDeduplicator(base.AsyncioTestCase):
                 mock_mbox_mailbox.return_value = msgs
             else:
                 mock_mbox_mailbox.side_effect = box_side_effect
-            mock_storage = mock.Mock()
+            mock_storage = mock.MagicMock()
             mock_storage.add_message = mock.Mock()
             mock_storage.add_message.side_effect = storage_side_effect
 
