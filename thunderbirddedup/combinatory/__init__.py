@@ -157,7 +157,7 @@ async def runDedup(
 
 def get_plan_output_directory(folder_pattern, temp_directory, root_file):
     path_loc = root_file.rfind(folder_pattern)
-    path = root_file[path_loc:]
+    path = root_file[path_loc:] if path_loc != -1 else root_file
     final_path = path.replace("/", "_").replace(".sbd", "")
     return os.path.join(
         temp_directory,

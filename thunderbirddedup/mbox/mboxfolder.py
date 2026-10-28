@@ -32,6 +32,7 @@ class MailboxFolder(object):
         ".wdseml",
         ".html",
         ".mboxrecord",
+        ".swp",
     )
 
     def __init__(self, foldername):

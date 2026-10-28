@@ -101,12 +101,31 @@ class Preplanner(object):
         LOG.info(f'Gathered {len(mboxfiles)} MBOX files')
         LOG.info(f'Splitting {len(mboxfiles)} based on {self.folder_pattern}')
 
+        norm_pattern = (self.folder_pattern or "").rstrip("/")
+        pattern_mbox_name = (
+            norm_pattern[:-4]
+            if norm_pattern.endswith(".sbd")
+            else None
+        )
+        abs_location = os.path.abspath(self.location) if self.location else ""
+
         for filename in mboxfiles:
             abs_filename = os.path.abspath(filename)
             path_count = abs_filename.count(self.folder_pattern)
             LOG.info(f"Pattern {self.folder_pattern} found {path_count} in {abs_filename}")
-            root_file_loc = abs_filename.rfind(self.folder_pattern)
-            root_file = abs_filename[root_file_loc:]
+            if (
+                pattern_mbox_name and
+                os.path.basename(abs_filename) == pattern_mbox_name
+            ):
+                root_file = pattern_mbox_name
+            else:
+                root_file_loc = abs_filename.rfind(self.folder_pattern)
+                if root_file_loc != -1:
+                    root_file = abs_filename[root_file_loc:]
+                elif abs_location and abs_filename.startswith(abs_location + os.sep):
+                    root_file = os.path.relpath(abs_filename, abs_location)
+                else:
+                    root_file = os.path.basename(abs_filename)
             LOG.info(f"Converted {abs_filename} to {root_file}")
 
             if not self.has_file(root_file):

@@ -35,11 +35,14 @@ def Atoi(s):
 
 
 THUNDERBIRD_HEADERS = [
-    'X-Mozilla-Status',     # Status Field
-    'X-Mozilla-Status2',    # 2nd Status Field
-    'X-Mozilla-Keys',       # ??
-    'X-Apparently-To',      # Differentiate between soruces?
-    'Message-ID',           # Unique Message ID
+    'X-Mozilla-Status',     # Thunderbird primary status flags (hex)
+    'X-Mozilla-Status2',    # Thunderbird extended status flags (hex)
+    'X-Mozilla-Keys',       # Thunderbird message tags/keywords
+    'X-Mozilla-',           # Other Thunderbird internal headers (e.g., Draft-Info)
+    'X-Account-Key',        # Thunderbird account key added on local filter/download
+    'X-UIDL',               # POP3/local UIDL tracking header
+    'X-Folder',             # Local folder tracking header
+    'X-Apparently-To',      # Delivery envelope header
 ]
 
 MSG_FLAG_READ = 0x0001
@@ -108,18 +111,21 @@ class Message(object):
                 re.compile(f"^{skip_header}", flags=re.I)
                 for skip_header in THUNDERBIRD_HEADERS
             ]
-            for k, v in self.headers.items():
-                do_skip = False
-                for m in matchers:
-                    if m.match(k):
-                        do_skip = True
-                        continue
-                if do_skip:
+            for k, v in sorted(self.headers.items(), key=lambda kv: kv[0].lower()):
+                if any(m.match(k) for m in matchers):
                     continue
                 for vline in v:
-                    mhash.update(encoder.to_encoding(vline))
-            for line in self.lines:
-                mhash.update(encoder.to_encoding(line))
+                    encoded_h = encoder.to_encoding(vline).replace(b'\r\n', b'\n')
+                    mhash.update(encoded_h)
+
+            body_lines = [
+                encoder.to_encoding(line).replace(b'\r\n', b'\n')
+                for line in self.lines
+            ]
+            while body_lines and len(body_lines[-1].strip()) == 0:
+                body_lines.pop()
+            for bline in body_lines:
+                mhash.update(bline)
 
         return mhash.hexdigest()
 

@@ -284,6 +284,8 @@ class TestMboxMessage(base.TestCase):
         msg.addData('X-Mozilla-Status', 'some value')
         msg.addData('X-Mozilla-Status2', 'some other value')
         msg.addData('X-Mozilla-Keys', 'some keyed value')
+        msg.addData('X-Account-Key', 'account2')
+        msg.addData('X-UIDL', 'uidl123')
         msg.addData('X-Apparently-To', 'some receipient')
         msg.addData('Message-ID', 'some id value')
 
@@ -295,28 +297,63 @@ class TestMboxMessage(base.TestCase):
         for rl in msg.rawLines:
             disk_hash.update(encoder.to_encoding(rl))
 
-        # non-disk hash first add the headeres aside from those
-        # that are excluded
+        # non-disk hash sorts headers case-insensitively aside from those
+        # that are excluded, normalizes CRLF -> LF, and strips trailing blank body lines
         matcher = [
             re.compile(f"^{skipper}", flags=re.I)
             for skipper in mboxmessage.THUNDERBIRD_HEADERS
         ]
-        for k, v in msg.headers.items():
-            do_skip = False
-            for m in matcher:
-                if m.match(k):
-                    do_skip = True
-                    continue
-            if do_skip:
+        for k, v in sorted(msg.headers.items(), key=lambda kv: kv[0].lower()):
+            if any(m.match(k) for m in matcher):
                 continue
             for vln in v:
-                non_disk_hash.update(encoder.to_encoding(vln))
+                non_disk_hash.update(
+                    encoder.to_encoding(vln).replace(b'\r\n', b'\n')
+                )
         # then it adds the body lines
         for ln in msg.lines:
-            non_disk_hash.update(encoder.to_encoding(ln))
+            non_disk_hash.update(
+                encoder.to_encoding(ln).replace(b'\r\n', b'\n')
+            )
 
         disk_hash_value = msg.getHash(diskHash=True)
         non_disk_hash_value = msg.getHash(diskHash=False)
 
         self.assertEqual(disk_hash_value, disk_hash.hexdigest())
         self.assertEqual(non_disk_hash_value, non_disk_hash.hexdigest())
+
+    def test_get_hash_canonicalization_and_message_id(self):
+        msg1 = mboxmessage.Message(0, b"From - Mon Jan 01 00:00:00 2024\r\n", 0)
+        msg1.addData("Subject", b"Subject: Order Confirmation\r\n")
+        msg1.addData("To", b"To: user@example.com\r\n")
+        msg1.addData("Message-ID", b"Message-ID: <abc-123@example.com>\r\n")
+        msg1.addData("X-Mozilla-Status", b"X-Mozilla-Status: 0001\r\n")
+        msg1.addData("X-Account-Key", b"X-Account-Key: account1\r\n")
+        msg1.addData("body", b"\r\n")
+        msg1.addData("body", b"Thank you for your order.\r\n")
+        msg1.addData("body", b"\r\n")
+
+        # Same logical message with LF line endings, different header order, no trailing blank line
+        msg2 = mboxmessage.Message(1, b"From - Tue Jan 02 12:34:56 2024\n", 500)
+        msg2.addData("Message-ID", b"Message-ID: <abc-123@example.com>\n")
+        msg2.addData("To", b"To: user@example.com\n")
+        msg2.addData("Subject", b"Subject: Order Confirmation\n")
+        msg2.addData("X-Mozilla-Status", b"X-Mozilla-Status: 0009\n")
+        msg2.addData("X-UIDL", b"X-UIDL: 9999\n")
+        msg2.addData("body", b"\n")
+        msg2.addData("body", b"Thank you for your order.\n")
+
+        self.assertEqual(msg1.getHash(diskHash=False), msg2.getHash(diskHash=False))
+
+        # Distinct message with identical Subject/To/body but different Message-ID
+        msg3 = mboxmessage.Message(2, b"From - Tue Jan 02 12:34:56 2024\n", 900)
+        msg3.addData("Message-ID", b"Message-ID: <xyz-789@example.com>\n")
+        msg3.addData("To", b"To: user@example.com\n")
+        msg3.addData("Subject", b"Subject: Order Confirmation\n")
+        msg3.addData("body", b"\n")
+        msg3.addData("body", b"Thank you for your order.\n")
+
+        self.assertNotEqual(
+            msg2.getHash(diskHash=False),
+            msg3.getHash(diskHash=False),
+        )

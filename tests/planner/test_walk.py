@@ -347,3 +347,26 @@ class TestPreplanner(base.AsyncioTestCase):
                     self.assertEqual(json_string, json_data)
 
                 print(f"json data: {json_string}")
+
+    async def test_preplan_root_inbox_and_top_level_folders(self):
+        with tempfile.TemporaryDirectory() as location:
+            with base.KeepLocalDirClean():
+                the_options = base.GenericOptions(
+                    location=location,
+                    folder_pattern="Inbox.sbd/",
+                )
+                p = walk.Preplanner(the_options)
+                top_inbox = os.path.join(location, "Inbox")
+                nested_inbox = os.path.join(
+                    location, "Inbox.sbd", "Activities.sbd", "Kids.sbd", "Inbox"
+                )
+                top_sent = os.path.join(location, "Sent")
+                outside_file = "/tmp/outside_archive_mbox"
+                await p.preplan([top_inbox, nested_inbox, top_sent, outside_file])
+                plans = dict(p.plans())
+                self.assertIn("Inbox", plans)
+                self.assertEqual(plans["Inbox"].files, [top_inbox, nested_inbox])
+                self.assertIn("Sent", plans)
+                self.assertEqual(plans["Sent"].files, [top_sent])
+                self.assertIn("outside_archive_mbox", plans)
+                self.assertEqual(plans["outside_archive_mbox"].files, [outside_file])

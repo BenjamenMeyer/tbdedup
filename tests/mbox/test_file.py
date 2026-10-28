@@ -260,6 +260,36 @@ class TestMboxMailbox(base.TestCase):
             self.assertEqual(msgs[0].getMozillaStatus(), 0x0001)
             self.assertEqual(msgs[1].getMozillaStatus(), 0x0009)
 
+    def test_buildSummary_no_blank_line_before_from_and_from_in_body_sentence(self):
+        with base.KeepLocalDirClean() as cwd:
+            mbox_file = os.path.join(cwd.temp_dir.name, "no_blank_sep_mbox")
+            # Message 1 has no extra blank line before Message 2's From line,
+            # and contains a sentence starting with 'From the desk of...'
+            # Message 2 is an identical copy of Message 1 at EOF with a trailing blank line
+            raw_content = (
+                b"From - Mon Jan 01 00:00:00 2024\n"
+                b"Message-ID: <same-id@example.com>\n"
+                b"Subject: Tightly packed\n"
+                b"\n"
+                b"From the desk of Alice: hello!\n"
+                b"From - Tue Jan 02 00:00:00 2024\n"
+                b"Message-ID: <same-id@example.com>\n"
+                b"Subject: Tightly packed\n"
+                b"\n"
+                b"From the desk of Alice: hello!\n"
+                b"\n"
+            )
+            with open(mbox_file, "wb") as f:
+                f.write(raw_content)
+
+            mb = mboxfile.Mailbox(None, mbox_file)
+            msgs = list(mb.buildSummary())
+            self.assertEqual(len(msgs), 2)
+            self.assertEqual(
+                msgs[0].getHash(diskHash=False),
+                msgs[1].getHash(diskHash=False),
+            )
+
     def test_buildSummary_empty_and_invalid_and_unquoted_boundary(self):
         with base.KeepLocalDirClean() as cwd:
             empty_file = os.path.join(cwd.temp_dir.name, "empty_mbox")
