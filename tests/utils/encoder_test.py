@@ -1,5 +1,5 @@
 """
-Copyright 2023 Benjamen R. Meyer
+Copyright 2023-2026 Benjamen R. Meyer
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@ limitations under the License.
 """
 import ddt
 
-from tbdedup.utils import encoder
+from thunderbirddedup.utils import encoder
 
 from tests import base
 

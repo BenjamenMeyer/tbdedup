@@ -1,3 +1,3 @@
 #!/bin/bash
 
-tb-dedup gui
+tb-dedup-gui

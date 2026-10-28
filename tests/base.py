@@ -1,5 +1,5 @@
 """
-Copyright 2023 Benjamen R. Meyer
+Copyright 2023-2026 Benjamen R. Meyer
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ import random
 import tempfile
 import unittest
 
-from tbdedup.mbox import mboxfile
+from thunderbirddedup.mbox import mboxfile
 
 
 class TestCase(unittest.TestCase):

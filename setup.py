@@ -1,5 +1,5 @@
 """
-Copyright 2023 Benjamen R. Meyer
+Copyright 2023-2026 Benjamen R. Meyer
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,11 +18,7 @@ from setuptools import setup, find_packages
 
 REQUIRES = [
     'mailbox',
-    #'asyncqt',
-    #'qasync',
-    #'PySide6',
-    'asyncSlot',
-    'PyQt5',
+    'PySide6',
 ]
 EXTRA_REQUIRES = {
 }
@@ -39,12 +35,12 @@ setup(
     extras_require=EXTRA_REQUIRES,
     entry_points={
         'console_scripts': [
-            'tb-dedup=tbdedup.cmd:main',
-            'tb-dedup-gui=tbdedup.gui2:main',
+            'tb-dedup=thunderbirddedup.cmd:main',
+            'tb-dedup-gui=thunderbirddedup.gui:main',
         ],
     },
-    test_suite='tbdedup',
-    packages=find_packages(exclude=['tests*', 'tbdedup/tests']),
+    test_suite='thunderbirddedup',
+    packages=find_packages(exclude=['tests*', 'thunderbirddedup/tests']),
     zip_safe=True,
     classifiers=[
         "Intended Audience :: End Users/Desktop",

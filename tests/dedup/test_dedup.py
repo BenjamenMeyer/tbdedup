@@ -1,5 +1,5 @@
 """
-Copyright 2023 Benjamen R. Meyer
+Copyright 2023-2026 Benjamen R. Meyer
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,17 +19,18 @@ import os
 import os.path
 from unittest import mock
 
-from tbdedup import (
+from thunderbirddedup import (
     db,
     dedup,
     mbox,
 )
-from tbdedup.mbox import (
+from thunderbirddedup.mbox import (
     mboxfile,
     mboxmessage,
 )
 
 from tests import base
+
 
 class MockStorage(object):
     def __init__(self, side_effect):
@@ -38,6 +39,7 @@ class MockStorage(object):
     def add_message(self, *args, **kwargs):
         if self.side_effect:
             raise self.side_effect
+
 
 @ddt.ddt
 class TestDeduplicator(base.AsyncioTestCase):
@@ -54,11 +56,12 @@ class TestDeduplicator(base.AsyncioTestCase):
     @ddt.data(
         (True, None, 1, None),
         (False, None, 1, None),
-        (True, [mbox.ErrInvalidFileFormat,], 1, None),
-        (False, [mbox.ErrInvalidFileFormat,], 1, None),
+        (True, [mbox.ErrInvalidFileFormat, ], 1, None),
+        (False, [mbox.ErrInvalidFileFormat, ], 1, None),
+        (True, [mbox.ErrEmptyFile, ], 1, None),
         (True, None, 10001, None),
-        (True, [mbox.ErrInvalidFileFormat,], 10001, None),
-        (True, None, 10001, [mbox.ErrInvalidFileFormat,]),
+        (True, [mbox.ErrInvalidFileFormat, ], 10001, None),
+        (True, None, 10001, [mbox.ErrInvalidFileFormat, ]),
     )
     @ddt.unpack
     async def test_process_file(
@@ -77,7 +80,7 @@ class TestDeduplicator(base.AsyncioTestCase):
         )
 
         with mock.patch(
-            'tbdedup.dedup.mbox.Mailbox.buildSummary',
+            'thunderbirddedup.dedup.mbox.Mailbox.buildSummary',
         ) as mock_mbox_mailbox:
             msgs = []
             for index in range(msg_count):
@@ -89,10 +92,9 @@ class TestDeduplicator(base.AsyncioTestCase):
                 mock_mbox_mailbox.return_value = msgs
             else:
                 mock_mbox_mailbox.side_effect = box_side_effect
-            mock_storage = mock.Mock()
+            mock_storage = mock.MagicMock()
             mock_storage.add_message = mock.Mock()
             mock_storage.add_message.side_effect = storage_side_effect
-
 
             filename = 'foo'
             await dedup.processFile(filename, mock_storage, counter_update)
@@ -118,14 +120,14 @@ class TestDeduplicator(base.AsyncioTestCase):
                         datetime.timedelta(days=index)
                     )
                     # MBox Marker
-                    # Start Line: `^FROM - [DOW] [MOY] [DD] [hh]:[mm]:[ss] [yyyy]$`
-                    print(f'FROM - {dt.strftime("%a %b %d %H:%M:%S %Y")}')
+                    # Start Line: `^From - [DOW] [MOY] [DD] [hh]:[mm]:[ss] [yyyy]$`
+                    print(f'From - {dt.strftime("%a %b %d %H:%M:%S %Y")}', file=mbox_file)
                     # write a few email headers
                     print('X-Mozilla-Status: 0001', file=mbox_file)
                     print('X-Mozilla-Status2: 00000000', file=mbox_file)
                     print(f'X-Apprently-To: foo@bar.com; {dt.strftime("%a, %d %b %Y %H:%M:%S +0000")}', file=mbox_file)
                     print('To: <foo@bar.com>', file=mbox_file)
-                    print('Date: {dt.strftime("%a, %d %b %Y %H:%M:%S +0000")}', file=mbox_file)
+                    print(f'Date: {dt.strftime("%a, %d %b %Y %H:%M:%S +0000")}', file=mbox_file)
                     email_data = f"""
                     Hello, World!
                     - Foo{index:02}
@@ -141,6 +143,83 @@ class TestDeduplicator(base.AsyncioTestCase):
                 mbox_files,
                 hash_storage_location,
                 use_disk_data_for_hash,
-                cwd,
+                cwd.temp_dir.name,
             )
-            # how to check the result?
+            self.assertTrue(os.path.isfile(output_filename))
+            output_box = mboxfile.Mailbox(None, output_filename)
+            output_msgs = list(output_box.buildSummary())
+            self.assertEqual(len(output_msgs), msg_count)
+
+    async def test_dedupper_merges_mozilla_status_and_unsets_expunged(self):
+        with base.KeepLocalDirClean() as cwd:
+            dt_str = "Mon Jan 01 00:00:00 2024"
+            msg_copy_1 = (
+                f"From - {dt_str}\n"
+                "X-Mozilla-Status: 0008\n"
+                "X-Mozilla-Status2: 00200000\n"
+                "X-Mozilla-Keys: $label1                        \n"
+                "To: <foo@bar.com>\n"
+                "Subject: Duplicate Test\n"
+                "\n"
+                "Identical body content\n"
+            )
+            msg_copy_2 = (
+                f"From - {dt_str}\n"
+                "X-Mozilla-Status: 000d\n"
+                "X-Mozilla-Status2: 10000000\n"
+                "X-Mozilla-Keys: $label2                        \n"
+                "To: <foo@bar.com>\n"
+                "Subject: Duplicate Test\n"
+                "\n"
+                "Identical body content\n"
+            )
+            file1 = os.path.join(cwd.temp_dir.name, "copy1")
+            file2 = os.path.join(cwd.temp_dir.name, "copy2")
+            with open(file1, "wt") as f1:
+                f1.write(msg_copy_1)
+            with open(file2, "wt") as f2:
+                f2.write(msg_copy_2)
+
+            output_filename = await dedup.dedupper(
+                [file1, file2],
+                None,
+                False,
+                cwd.temp_dir.name,
+            )
+            output_box = mboxfile.Mailbox(None, output_filename)
+            output_msgs = list(output_box.buildSummary())
+            self.assertEqual(len(output_msgs), 1)
+            # 0x0008 | 0x000d = 0x000d; clearing 0x0008 -> 0x0005 (Read | Marked)
+            self.assertEqual(output_msgs[0].getMozillaStatus(), 0x0005)
+            # 0x00200000 | 0x10000000; clearing 0x00200000 -> 0x10000000
+            self.assertEqual(output_msgs[0].getMozillaStatus2(), 0x10000000)
+            self.assertEqual(output_msgs[0].getMozillaKeys(), "$label1 $label2")
+
+    async def test_async_dedup_and_corrupted_rebuild(self):
+        with base.KeepLocalDirClean() as cwd:
+            dt_str = "Mon Jan 01 00:00:00 2024"
+            msg_copy = (
+                f"From - {dt_str}\n"
+                "X-Mozilla-Status: 0001\n"
+                "Subject: Async Dedup Test\n"
+                "\n"
+                "Body content\n"
+            )
+            file1 = os.path.join(cwd.temp_dir.name, "folder_mbox")
+            with open(file1, "wt") as f1:
+                f1.write(msg_copy)
+
+            options = base.GenericOptions(
+                location=cwd.temp_dir.name,
+                hash_storage=None,
+                msg_hash_source="parsed",
+            )
+            await dedup.asyncDedup(options)
+
+            # Test disk_hash mismatch branch in dedupper
+            with mock.patch(
+                "thunderbirddedup.mbox.Mailbox.getMessageFromFile",
+                return_value=b"corrupted disk data",
+            ):
+                out_file = await dedup.dedupper([file1], None, False, cwd.temp_dir.name)
+                self.assertEqual(os.path.getsize(out_file), 0)

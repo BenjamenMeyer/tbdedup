@@ -1,5 +1,5 @@
 """
-Copyright 2023 Benjamen R. Meyer
+Copyright 2023-2026 Benjamen R. Meyer
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,10 +18,10 @@ import ddt
 import os
 import os.path
 
-from tbdedup import (
+from thunderbirddedup import (
     db
 )
-from tbdedup.mbox import (
+from thunderbirddedup.mbox import (
     mboxfile,
     mboxmessage,
 )
@@ -229,3 +229,117 @@ class TestMboxMailbox(base.TestCase):
                     msg_data.append(msgData)
 
             self.assertEqual(len(msg_data), email_count)
+            storage.close()
+
+    def test_buildSummary_sender_envelope_and_colon_in_body(self):
+        with base.KeepLocalDirClean() as cwd:
+            mbox_file = os.path.join(cwd.temp_dir.name, "sender_envelope_mbox")
+            raw_content = (
+                b"From user@example.com Mon Jan 01 00:00:00 2024\n"
+                b"X-Mozilla-Status: 0001\n"
+                b"Subject: First message\n"
+                b"\n"
+                b"Note: This body line has a colon right after the blank line!\n"
+                b">From - Escaped body line that should not split the message\n"
+                b"\n"
+                b"From another@example.com Tue Jan 02 00:00:00 2024\n"
+                b"X-Mozilla-Status: 0009\n"
+                b"Subject: Second message\n"
+                b"\n"
+                b"Second body\n"
+            )
+            with open(mbox_file, "wb") as f:
+                f.write(raw_content)
+
+            mb = mboxfile.Mailbox(None, mbox_file)
+            msgs = list(mb.buildSummary())
+            self.assertEqual(len(msgs), 2)
+            self.assertNotIn("Note", msgs[0].headers)
+            self.assertIn(b"Note: This body line has a colon", msgs[0].getData("body"))
+            self.assertIn(b">From - Escaped body line", msgs[0].getData("body"))
+            self.assertEqual(msgs[0].getMozillaStatus(), 0x0001)
+            self.assertEqual(msgs[1].getMozillaStatus(), 0x0009)
+
+    def test_buildSummary_no_blank_line_before_from_and_from_in_body_sentence(self):
+        with base.KeepLocalDirClean() as cwd:
+            mbox_file = os.path.join(cwd.temp_dir.name, "no_blank_sep_mbox")
+            # Message 1 has no extra blank line before Message 2's From line,
+            # and contains a sentence starting with 'From the desk of...'
+            # Message 2 is an identical copy of Message 1 at EOF with a trailing blank line
+            raw_content = (
+                b"From - Mon Jan 01 00:00:00 2024\n"
+                b"Message-ID: <same-id@example.com>\n"
+                b"Subject: Tightly packed\n"
+                b"\n"
+                b"From the desk of Alice: hello!\n"
+                b"From - Tue Jan 02 00:00:00 2024\n"
+                b"Message-ID: <same-id@example.com>\n"
+                b"Subject: Tightly packed\n"
+                b"\n"
+                b"From the desk of Alice: hello!\n"
+                b"\n"
+            )
+            with open(mbox_file, "wb") as f:
+                f.write(raw_content)
+
+            mb = mboxfile.Mailbox(None, mbox_file)
+            msgs = list(mb.buildSummary())
+            self.assertEqual(len(msgs), 2)
+            self.assertEqual(
+                msgs[0].getHash(diskHash=False),
+                msgs[1].getHash(diskHash=False),
+            )
+
+    def test_buildSummary_empty_and_invalid_and_unquoted_boundary(self):
+        with base.KeepLocalDirClean() as cwd:
+            empty_file = os.path.join(cwd.temp_dir.name, "empty_mbox")
+            with open(empty_file, "wb"):
+                pass
+            mb_empty = mboxfile.Mailbox(None, empty_file)
+            with self.assertRaises(mboxfile.ErrEmptyFile):
+                list(mb_empty.buildSummary())
+
+            invalid_file = os.path.join(cwd.temp_dir.name, "invalid_mbox")
+            with open(invalid_file, "wb") as f:
+                f.write(b"Not a valid From line\n")
+            mb_invalid = mboxfile.Mailbox(None, invalid_file)
+            with self.assertRaises(mboxfile.ErrInvalidFileFormat):
+                list(mb_invalid.buildSummary())
+
+            boundary_file = os.path.join(cwd.temp_dir.name, "boundary_mbox")
+            with open(boundary_file, "wb") as f:
+                f.write(
+                    b"From - Mon Jan 01 00:00:00 2024\r\n"
+                    b"Content-Type: multipart/mixed;\r\n"
+                    b" boundary=unquoted_boundary_123\r\n"
+                    b"Subject: Boundary test\r\n"
+                    b"--unquoted_boundary_123\r\n"
+                    b"Body content inside boundary\r\n"
+                    b"\r\n"
+                    b"From - Tue Jan 02 00:00:00 2024\r\n"
+                    b"Subject: Second msg\r\n"
+                    b"\r\n"
+                    b"Second body\r\n"
+                )
+            mb_boundary = mboxfile.Mailbox(None, boundary_file)
+            mb_boundary.debug_enabled = True
+            msgs = list(mb_boundary.buildSummary())
+            self.assertEqual(len(msgs), 2)
+
+            # Test getMessageFromFile edge cases (empty file, zero length, negative length)
+            self.assertEqual(
+                mboxfile.Mailbox.getMessageFromFile(
+                    {"location": empty_file, "messageid": 0, "start_offset": 0, "end_offset": 10}
+                ),
+                b"",
+            )
+            self.assertEqual(
+                mboxfile.Mailbox.getMessageFromFile(
+                    {"location": boundary_file, "messageid": 0, "start_offset": 5, "end_offset": 5}
+                ),
+                b"",
+            )
+            with self.assertRaises(mboxfile.ErrInvalidRecordLength):
+                mboxfile.Mailbox.getMessageFromFile(
+                    {"location": boundary_file, "messageid": 0, "start_offset": 10, "end_offset": 5}
+                )
