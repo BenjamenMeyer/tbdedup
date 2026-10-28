@@ -24,15 +24,26 @@ from thunderbirddedup.gui import app
 async def asyncGui(options=None):
     the_app = QApplication.instance() or QApplication(sys.argv)
     w = app.MainWindow(initial_options=options)
+    the_app._main_window = w
     w.show()
     return w
 
 
+def run_gui():
+    from thunderbirddedup import cmd
+    the_app = QApplication.instance() or QApplication(sys.argv)
+    the_app.setQuitOnLastWindowClosed(True)
+    QtAsyncio.run(cmd.asyncMain(), keep_running=True, handle_sigint=True)
+    return 0
+
+
 def main():
     the_app = QApplication.instance() or QApplication(sys.argv)
+    the_app.setQuitOnLastWindowClosed(True)
     w = app.MainWindow()
+    the_app._main_window = w
     w.show()
-    QtAsyncio.run(keep_running=False)
+    QtAsyncio.run(keep_running=True, handle_sigint=True)
     return 0
 
 
