@@ -75,19 +75,17 @@ class TestCmd(base.AsyncioTestCase):
                 self.assertEqual(ret, -1)
 
             # 4. gui subcommand dispatches to asyncGui
-            fake_gui = mock.MagicMock()
-            fake_gui.asyncGui = mock.AsyncMock(return_value=0)
             with mock.patch.object(
                 sys,
                 "argv",
                 ["tb-dedup", "gui"],
-            ), mock.patch.dict(
-                sys.modules,
-                {"thunderbirddedup.gui": fake_gui},
-            ):
+            ), mock.patch(
+                "thunderbirddedup.gui.asyncGui",
+                new=mock.AsyncMock(return_value=0),
+            ) as mock_gui:
                 ret = await cmd.asyncMain()
                 self.assertEqual(ret, 0)
-                fake_gui.asyncGui.assert_awaited_once()
+                mock_gui.assert_awaited_once()
 
     def test_main_tui_and_gui(self):
         with mock.patch.object(

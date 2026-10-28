@@ -18,10 +18,7 @@ from setuptools import setup, find_packages
 
 REQUIRES = [
     'mailbox',
-    'asyncslot',
     'PySide6',
-    'aiotkinter',
-    'kivy',
 ]
 EXTRA_REQUIRES = {
 }
@@ -39,10 +36,7 @@ setup(
     entry_points={
         'console_scripts': [
             'tb-dedup=thunderbirddedup.cmd:main',
-            # 'tb-dedup-gui=thunderbirddedup.gui:main',
-            'tb-dedup-gui=thunderbirddedup.gui4:main',
-            'tb-dedup-gui2=thunderbirddedup.gui5:main',
-            'tb-dedup-gui3=thunderbirddedup.gui3:main',
+            'tb-dedup-gui=thunderbirddedup.gui:main',
         ],
     },
     test_suite='thunderbirddedup',

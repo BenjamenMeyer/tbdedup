@@ -15,24 +15,25 @@ limitations under the License.
 """
 import sys
 
-import asyncslot
-from PySide6.QtWidgets import (
-    QApplication,
-)
+import PySide6.QtAsyncio as QtAsyncio
+from PySide6.QtWidgets import QApplication
 
 from thunderbirddedup.gui import app
 
 
-async def asyncGui(options):
-    pass
+async def asyncGui(options=None):
+    the_app = QApplication.instance() or QApplication(sys.argv)
+    w = app.MainWindow(initial_options=options)
+    w.show()
+    return w
 
 
 def main():
-    the_app = QApplication(sys.argv)
+    the_app = QApplication.instance() or QApplication(sys.argv)
     w = app.MainWindow()
     w.show()
-    with asyncslot.AsyncSlotRunner():
-        return the_app.exec()
+    QtAsyncio.run(keep_running=False)
+    return 0
 
 
 if __name__ == "__main__":

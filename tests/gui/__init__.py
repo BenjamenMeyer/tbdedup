@@ -13,31 +13,3 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-import asyncio
-import sys
-
-# import asyncqt
-# import qasync
-import asyncslot
-
-from PyQt5.QtWidgets import QApplication, QWidget
-
-from thunderbirddedup.gui.app import MainWindow
-
-
-async def asyncGui(options):
-    # qt_event_loop = qasync.QEventLoop(app)
-    # asyncio.set_event_loop(qt_event_loop)
-    pass
-
-
-def main():
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    with asyncslot.AsyncSlotRunner():
-        app.exec()
-
-
-if __name__ == "__main__":
-    sys.exit(main())
