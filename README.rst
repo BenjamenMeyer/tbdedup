@@ -3,6 +3,8 @@ TBDedup
 
 TBDedup is a Mail De-duplication program for Thunderbird MBOX files.
 
+For a complete step-by-step walkthrough of both the desktop GUI and CLI workflows, see the `User Guide & Walkthrough <docs/walkthrough.md>`_.
+
 History
 -------
 
@@ -174,3 +176,21 @@ Thunderbird profile.
 .. note:: I also found https://github.com/lenlo/mailcheck as a useful tool. It does offer dedup
    support; but it also seems to find issues with the length of the messages as stored by
    Thunderbird. Still it can provide a useful check that the output file is a valid MBOX file.
+
+Running Full Reconstruction & the Desktop GUI
+---------------------------------------------
+
+In addition to running individual pipeline stages (`preplanner`, `planner`, `dedup`), you can run the full end-to-end reconstruction pipeline via `tb-dedup do` or use the interactive PySide6 desktop GUI via `tb-dedup gui` (or `tb-dedup-gui`):
+
+.. code-block:: shell
+
+    # Launch the interactive desktop GUI:
+    $ tb-dedup gui
+
+    # Or run full CLI deduplication and .sbd folder tree reconstruction:
+    $ tb-dedup do \
+        --location ~/.thunderbird/dm8a9v53.default/Mail/Local\ Folders/Inbox.sbd \
+        --storage-location ~/tb-dedup-work \
+        --output-location ~/tb-dedup-clean/Inbox.sbd
+
+See the `User Guide & Walkthrough <docs/walkthrough.md>`_ for detailed step-by-step instructions.
