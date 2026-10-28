@@ -168,8 +168,20 @@ class TestGui(base.AsyncioTestCase):
         win.do_deduplicate()
         win.close()
 
-        # Test gui.main() entry point
+        # Test gui.main() and gui.run_gui() entry points
         with mock.patch("thunderbirddedup.gui.QtAsyncio.run") as mock_qtrun:
             ret = gui.main()
             self.assertEqual(ret, 0)
-            mock_qtrun.assert_called_once_with(keep_running=False)
+            mock_qtrun.assert_called_once_with(
+                keep_running=True, handle_sigint=True
+            )
+
+        with mock.patch(
+            "thunderbirddedup.cmd.asyncMain",
+            new=mock.MagicMock(return_value="coro"),
+        ), mock.patch("thunderbirddedup.gui.QtAsyncio.run") as mock_qtrun:
+            ret = gui.run_gui()
+            self.assertEqual(ret, 0)
+            mock_qtrun.assert_called_once_with(
+                "coro", keep_running=True, handle_sigint=True
+            )

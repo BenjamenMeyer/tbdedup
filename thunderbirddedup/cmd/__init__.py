@@ -212,10 +212,11 @@ def main():
     print(f"Args: {sys.argv}")
     if 'gui' in sys.argv:
         print("Detected GUI Application. Setting Qt Event Loop")
+        from thunderbirddedup import gui
+        return gui.run_gui()
     else:
         print("Detected TUI Application. Using standard Python3 Asyncio Event Loop")
-
-    asyncio.run(asyncMain())
+        return asyncio.run(asyncMain())
 
 
 if __name__ == "__main__":

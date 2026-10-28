@@ -103,7 +103,8 @@ class TestCmd(base.AsyncioTestCase):
             "argv",
             ["tb-dedup", "gui"],
         ), mock.patch(
-            "thunderbirddedup.cmd.asyncio.run",
-        ) as mock_run:
+            "thunderbirddedup.gui.run_gui",
+            return_value=0,
+        ) as mock_gui_run:
             cmd.main()
-            mock_run.assert_called_once()
+            mock_gui_run.assert_called_once()
