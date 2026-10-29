@@ -47,10 +47,14 @@ class MailboxFolder(object):
 
     async def getMboxFiles(self):
         fileResult = []
+        walk_counter = 0
         for root, dirs, files in os.walk(self.foldername):
             LOG.info(f"[{root}] Found {len(dirs)} sub-directories and {len(files)} files")
             for filename in files:
                 LOG.info(f"[{root}] Found file: {filename}")
+                walk_counter += 1
+                if walk_counter % 250 == 0:
+                    await asyncio.sleep(0)
                 if self.is_skipped_file(filename):
                     LOG.debug(f"[{root}] Skipping file {filename}")
                     continue
@@ -62,6 +66,7 @@ class MailboxFolder(object):
                 )
             for dirname in dirs:
                 LOG.info(f"[{root}] Found folder: {dirname}")
+            await asyncio.sleep(0)
 
         allFiles = '\n'.join(fileResult)
         LOG.info(f"[{self.foldername}] Found {len(fileResult)} files to process:\n{allFiles}")

@@ -146,6 +146,8 @@ async def runDedup(
             plan,
             output_file,
         )
+    except asyncio.CancelledError:
+        raise
     except Exception:
         LOG.exception(f'Failed while carrying out plan for {output_directory}')
         return (

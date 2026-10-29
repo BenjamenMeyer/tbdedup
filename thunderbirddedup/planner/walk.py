@@ -97,7 +97,7 @@ class Preplanner(object):
             abs_filename
         )
 
-    async def preplan(self, mboxfiles):
+    async def preplan(self, mboxfiles, progress_callback=None):
         LOG.info(f'Gathered {len(mboxfiles)} MBOX files')
         LOG.info(f'Splitting {len(mboxfiles)} based on {self.folder_pattern}')
 
@@ -108,8 +108,9 @@ class Preplanner(object):
             else None
         )
         abs_location = os.path.abspath(self.location) if self.location else ""
+        total_files = len(mboxfiles)
 
-        for filename in mboxfiles:
+        for idx, filename in enumerate(mboxfiles, start=1):
             abs_filename = os.path.abspath(filename)
             path_count = abs_filename.count(self.folder_pattern)
             LOG.info(f"Pattern {self.folder_pattern} found {path_count} in {abs_filename}")
@@ -133,6 +134,11 @@ class Preplanner(object):
                 self.init_file(root_file, self.location, abs_filename)
             else:
                 self.append_file(root_file, abs_filename)
+
+            if idx % 250 == 0 or idx == total_files:
+                if progress_callback is not None:
+                    progress_callback(idx, total_files)
+                await asyncio.sleep(0)
 
         LOG.info(f'Completed pre-planning')
 
