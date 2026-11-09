@@ -338,3 +338,105 @@ class TestCombinatory(base.AsyncioTestCase):
             # 4. User declines confirmation prompt -> move skipped, operation JSON written
             with mock.patch("builtins.input", return_value="n"):
                 await combinatory.combinatory(options, mboxfiles)
+
+    def test_inspect_and_cleanup_storage_directory_symlinks_only(self):
+        with base.KeepLocalDirClean() as cwd:
+            # Create real source files
+            source_dir = os.path.join(cwd.temp_dir.name, "source_mail")
+            os.makedirs(source_dir, exist_ok=True)
+            source_file1 = os.path.join(source_dir, "Inbox")
+            source_file2 = os.path.join(source_dir, "Sent")
+            with open(source_file1, "wt") as f:
+                f.write("Source 1\n")
+            with open(source_file2, "wt") as f:
+                f.write("Source 2\n")
+
+            # Create storage directory structure
+            storage_dir = os.path.join(cwd.temp_dir.name, "storage_work")
+            plan_dir = os.path.join(storage_dir, "Inbox_Dedup")
+            os.makedirs(plan_dir, exist_ok=True)
+
+            # Create symlinks pointing to source files
+            link1 = os.path.join(plan_dir, "000001.mbox")
+            link2 = os.path.join(plan_dir, "000002.mbox")
+            os.symlink(source_file1, link1)
+            os.symlink(source_file2, link2)
+
+            # Create working files
+            plan_json = os.path.join(plan_dir, "plan_output.json")
+            mapping_json = os.path.join(plan_dir, "mapping.json")
+            with open(plan_json, "wt") as f:
+                f.write('{"plan": true}\n')
+            with open(mapping_json, "wt") as f:
+                f.write('{"mapping": true}\n')
+
+            # 1. Inspect
+            inspection = combinatory.inspect_storage_directory(storage_dir)
+            self.assertEqual(len(inspection["symlinks"]), 2)
+            self.assertEqual(len(inspection["working_files"]), 2)
+            self.assertEqual(len(inspection["directories"]), 1)
+
+            # 2. Cleanup symlinks only
+            res = combinatory.cleanup_storage_directory(
+                storage_dir, remove_working_files=False
+            )
+            self.assertEqual(res["symlinks_removed"], 2)
+            self.assertEqual(res["files_removed"], 0)
+            self.assertEqual(res["dirs_removed"], 0)
+
+            # Symlinks should be gone
+            self.assertFalse(os.path.exists(link1))
+            self.assertFalse(os.path.exists(link2))
+
+            # Working files and directory MUST remain
+            self.assertTrue(os.path.exists(plan_json))
+            self.assertTrue(os.path.exists(mapping_json))
+            self.assertTrue(os.path.isdir(plan_dir))
+
+            # Source files MUST remain untouched
+            self.assertTrue(os.path.exists(source_file1))
+            self.assertTrue(os.path.exists(source_file2))
+
+    def test_cleanup_storage_directory_full_purge(self):
+        with base.KeepLocalDirClean() as cwd:
+            source_dir = os.path.join(cwd.temp_dir.name, "source_mail")
+            os.makedirs(source_dir, exist_ok=True)
+            source_file = os.path.join(source_dir, "Drafts")
+            with open(source_file, "wt") as f:
+                f.write("Draft content\n")
+
+            storage_dir = os.path.join(cwd.temp_dir.name, "storage_work")
+            plan_dir = os.path.join(storage_dir, "Drafts_Dedup")
+            os.makedirs(plan_dir, exist_ok=True)
+
+            link = os.path.join(plan_dir, "000001.mbox")
+            os.symlink(source_file, link)
+
+            work_file = os.path.join(plan_dir, "plan_output.json")
+            with open(work_file, "wt") as f:
+                f.write("{}\n")
+
+            # Cleanup with remove_working_files=True
+            res = combinatory.cleanup_storage_directory(
+                storage_dir, remove_working_files=True
+            )
+            self.assertEqual(res["symlinks_removed"], 1)
+            self.assertEqual(res["files_removed"], 1)
+            self.assertEqual(res["dirs_removed"], 1)
+
+            # Working files, symlink, and subfolder are gone
+            self.assertFalse(os.path.exists(link))
+            self.assertFalse(os.path.exists(work_file))
+            self.assertFalse(os.path.exists(plan_dir))
+
+            # Source file MUST still exist!
+            self.assertTrue(os.path.exists(source_file))
+
+    def test_inspect_and_cleanup_invalid_dir(self):
+        res1 = combinatory.inspect_storage_directory(None)
+        self.assertEqual(res1["symlinks"], [])
+        self.assertEqual(res1["working_files"], [])
+
+        res2 = combinatory.cleanup_storage_directory("/nonexistent/path")
+        self.assertEqual(res2["symlinks_removed"], 0)
+        self.assertEqual(res2["files_removed"], 0)

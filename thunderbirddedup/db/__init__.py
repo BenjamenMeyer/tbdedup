@@ -33,6 +33,8 @@ import contextlib
 import logging
 import sqlite3
 
+from thunderbirddedup.utils import file_tracker
+
 LOG = logging.getLogger(__name__)
 
 SCHEMAS = [
@@ -118,19 +120,42 @@ class MessageDatabase(object):
         self._db = None
         self._location = storageLocation
         self._in_transaction = False
+        self._tracker_token = None
         self.init()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __del__(self):
+        self.close()
 
     def close(self):
         if self._db is not None:
             self._db.close()
             self._db = None
+        if self._tracker_token is not None:
+            file_tracker.unregister_resource(self._tracker_token)
+            self._tracker_token = None
 
     def init(self):
+        if self._tracker_token is not None:
+            file_tracker.unregister_resource(self._tracker_token)
+            self._tracker_token = None
+
         self._db = sqlite3.connect(
             ":memory:"
             if self._location is None
             else self._location
         )
+        if self._location is not None and self._location != ":memory:":
+            self._tracker_token = file_tracker.register_resource(
+                self._location,
+                resource_type="sqlite",
+                handle=self._db,
+            )
         for version_schema in SCHEMAS:
             current_schema_version = self.get_schema_version()
             if current_schema_version < version_schema["version"]:

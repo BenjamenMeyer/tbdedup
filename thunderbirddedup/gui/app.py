@@ -14,8 +14,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 import asyncio
+import logging
 import os
 import os.path
+import sys
 
 from PySide6.QtCore import (
     QItemSelectionModel,
@@ -30,6 +32,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QComboBox,
     QFileDialog,
     QGridLayout,
@@ -61,8 +64,25 @@ TREE_COLUMNS = [
     "Total Msgs",
     "Unique Msgs",
     "Dedup Size",
+    "Saved",
     "Status",
 ]
+DIR_KEY_ROLE = Qt.UserRole + 1
+
+
+class QtLogHandler(logging.Handler):
+    """Logging handler that routes records directly into GUI log receipt."""
+
+    def __init__(self, callback):
+        super().__init__()
+        self.callback = callback
+
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            self.callback(msg)
+        except Exception:
+            self.handleError(record)
 
 
 class MainWindow(QMainWindow):
@@ -70,16 +90,35 @@ class MainWindow(QMainWindow):
 
     def __init__(self, initial_options=None):
         super().__init__()
+        combinatory.ensure_max_open_files()
         self.runner = runner.TbDedupRunner()
         self.runner.record_log.connect(self.log_receipt)
         self.runner.progress_updated.connect(self.on_progress_updated)
+        self.runner.overall_progress_updated.connect(
+            self.on_overall_progress_updated
+        )
+        self.runner.copy_progress_updated.connect(self.on_copy_progress_updated)
+        self.runner.file_progress_updated.connect(self.on_file_progress_updated)
+        self.runner.write_progress_updated.connect(
+            self.on_write_progress_updated
+        )
+        self.runner.plan_live_status_updated.connect(
+            self.on_plan_live_status_updated
+        )
         self.runner.preplan_complete.connect(self.on_preplan_completed)
         self.runner.plan_dedup_updated.connect(self.on_plan_dedup_updated)
         self.runner.dedup_complete.connect(self.on_dedup_completed)
         self.runner.move_complete.connect(self.on_move_completed)
+        self.runner.operation_cancelled.connect(self.on_operation_cancelled)
         self.record_log.connect(self.log_receipt)
 
         self._row_items_by_root = {}
+        self._dir_rows_by_key = {}
+        self._leaf_stats = {}
+        self._active_task = None
+
+        # Configure unified logging across Console, Log Window, and File
+        self._init_logging()
 
         self.setWindowTitle("Thunderbird MBox Deduplicator")
         self.resize(1200, 820)
@@ -100,6 +139,7 @@ class MainWindow(QMainWindow):
 
         self.lbl_storage = QLabel("Work/Storage Dir:")
         self.txt_storage_path = QLineEdit()
+        self.txt_storage_path.textChanged.connect(self.storage_path_changed)
         self.btn_storage_path = QPushButton("Select...")
         self.btn_storage_path.clicked.connect(self.select_storage_path)
         config_grid.addWidget(self.lbl_storage, 1, 0)
@@ -108,6 +148,7 @@ class MainWindow(QMainWindow):
 
         self.lbl_output = QLabel("Output Tree Dir:")
         self.txt_output_path = QLineEdit()
+        self.txt_output_path.textChanged.connect(self._update_action_button_states)
         self.btn_output_path = QPushButton("Select...")
         self.btn_output_path.clicked.connect(self.select_output_path)
         config_grid.addWidget(self.lbl_output, 2, 0)
@@ -174,12 +215,39 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(splitter, stretch=3)
 
-        # 3. Progress Bar & Step Buttons
-        self.progress = QProgressBar()
-        self.progress.setMinimum(0)
-        self.progress.setMaximum(100)
-        self.progress.setValue(0)
-        main_layout.addWidget(self.progress)
+        # 3. Four-Tier Progress Bars & Step Buttons
+        self.progress_overall = QProgressBar()
+        self.progress_overall.setMinimum(0)
+        self.progress_overall.setMaximum(100)
+        self.progress_overall.setValue(0)
+        self.progress_overall.setTextVisible(True)
+        self.progress_overall.setFormat("Overall Folder Groups: Idle")
+        self.progress = self.progress_overall
+        main_layout.addWidget(self.progress_overall)
+
+        self.progress_copies = QProgressBar()
+        self.progress_copies.setMinimum(0)
+        self.progress_copies.setMaximum(100)
+        self.progress_copies.setValue(0)
+        self.progress_copies.setTextVisible(True)
+        self.progress_copies.setFormat("Folder Copies: Idle")
+        main_layout.addWidget(self.progress_copies)
+
+        self.progress_file = QProgressBar()
+        self.progress_file.setMinimum(0)
+        self.progress_file.setMaximum(1000)
+        self.progress_file.setValue(0)
+        self.progress_file.setTextVisible(True)
+        self.progress_file.setFormat("Current Copy Read: Idle")
+        main_layout.addWidget(self.progress_file)
+
+        self.progress_write = QProgressBar()
+        self.progress_write.setMinimum(0)
+        self.progress_write.setMaximum(100)
+        self.progress_write.setValue(0)
+        self.progress_write.setTextVisible(True)
+        self.progress_write.setFormat("Deduplicated Output Write: Idle")
+        main_layout.addWidget(self.progress_write)
 
         actions_layout = QHBoxLayout()
         self.btn_search = QPushButton("1. Scan && Group Folders")
@@ -194,9 +262,19 @@ class MainWindow(QMainWindow):
         self.btn_move.setEnabled(False)
         self.btn_move.clicked.connect(self.do_move)
 
+        self.btn_cleanup = QPushButton("Clean Up Storage...")
+        self.btn_cleanup.setEnabled(True)
+        self.btn_cleanup.clicked.connect(self.do_cleanup)
+
+        self.btn_cancel = QPushButton("Cancel Operation")
+        self.btn_cancel.setEnabled(False)
+        self.btn_cancel.clicked.connect(self.do_cancel)
+
         actions_layout.addWidget(self.btn_search)
         actions_layout.addWidget(self.btn_dedup)
         actions_layout.addWidget(self.btn_move)
+        actions_layout.addWidget(self.btn_cleanup)
+        actions_layout.addWidget(self.btn_cancel)
         main_layout.addLayout(actions_layout)
 
         # 4. Log Output Area
@@ -214,12 +292,110 @@ class MainWindow(QMainWindow):
         if initial_options is not None and getattr(initial_options, "location", None):
             self.txt_path.setText(initial_options.location)
 
+    def _init_logging(self):
+        log_fmt = logging.Formatter(
+            fmt='[%(asctime)s][%(levelname)s][%(name)s]: %(message)s'
+        )
+        self._qt_log_handler = QtLogHandler(self.log_receipt)
+        self._qt_log_handler.setFormatter(log_fmt)
+        logging.getLogger().addHandler(self._qt_log_handler)
+
+        root_logger = logging.getLogger()
+        has_console = any(
+            isinstance(h, logging.StreamHandler) and not isinstance(h, QtLogHandler)
+            for h in root_logger.handlers
+        )
+        if not has_console:
+            console_h = logging.StreamHandler(sys.stdout)
+            console_h.setFormatter(log_fmt)
+            root_logger.addHandler(console_h)
+
+        log_file = os.path.join(os.getcwd(), "thunderbird_dedup.log")
+        try:
+            self._file_log_handler = logging.FileHandler(
+                log_file, mode="a", encoding="utf-8"
+            )
+            self._file_log_handler.setFormatter(log_fmt)
+            root_logger.addHandler(self._file_log_handler)
+        except Exception as ex:
+            self.log_receipt(f"Warning: could not open log file {log_file}: {ex}")
+
+        root_logger.setLevel(logging.INFO)
+
+    def is_running(self):
+        return self._active_task is not None and not self._active_task.done()
+
+    def _can_move_results(self):
+        if any(r[2] is not None for r in self.runner.worker_results):
+            return True
+        if self.runner.temp_directory and combinatory.discover_disk_results(self.runner.temp_directory):
+            return True
+        storage_text = self.txt_storage_path.text().strip()
+        if storage_text and combinatory.discover_disk_results(storage_text):
+            return True
+        return False
+
+    def _update_action_button_states(self):
+        running = self.is_running()
+        self.btn_cancel.setEnabled(running)
+
+        if running:
+            self.btn_search.setEnabled(False)
+            self.btn_dedup.setEnabled(False)
+            self.btn_move.setEnabled(False)
+            self.btn_cleanup.setEnabled(False)
+        else:
+            self.btn_cleanup.setEnabled(True)
+            source_path = self.txt_path.text().strip()
+            self.btn_search.setEnabled(os.path.isdir(source_path))
+            has_plans = (
+                self.runner.preplanner is not None and
+                self.runner.preplanner.plan_count() > 0
+            )
+            has_checked = len(self.get_checked_root_files()) > 0
+            self.btn_dedup.setEnabled(has_plans and has_checked)
+            self.btn_move.setEnabled(self._can_move_results())
+
+    def _update_dedup_button_state(self):
+        self._update_action_button_states()
+
+    def _on_task_done(self, task):
+        if self._active_task is task:
+            self._active_task = None
+        try:
+            if not task.cancelled() and task.exception() is not None:
+                exc = task.exception()
+                LOG.error(f"Task encountered an error: {exc}")
+                self.record_log.emit(f"ERROR: {exc}")
+        except Exception:
+            pass
+        self._update_action_button_states()
+
     def _schedule_coro(self, coro):
         try:
             loop = asyncio.get_running_loop()
-            return loop.create_task(coro)
+            task = loop.create_task(coro)
+            self._active_task = task
+            self._update_action_button_states()
+            task.add_done_callback(self._on_task_done)
+            return task
         except RuntimeError:
-            return asyncio.run(coro)
+            self._active_task = None
+            try:
+                self._update_action_button_states()
+                return asyncio.run(coro)
+            finally:
+                self._active_task = None
+                self._update_action_button_states()
+
+    def closeEvent(self, event):
+        if self._active_task is not None and not self._active_task.done():
+            self._active_task.cancel()
+        if hasattr(self, "_qt_log_handler"):
+            logging.getLogger().removeHandler(self._qt_log_handler)
+        if hasattr(self, "_file_log_handler"):
+            logging.getLogger().removeHandler(self._file_log_handler)
+        super().closeEvent(event)
 
     def build_options(self):
         storage_text = self.txt_storage_path.text().strip() or None
@@ -238,23 +414,203 @@ class MainWindow(QMainWindow):
         self.txt_logs.append(message)
         self.status_bar.showMessage(message)
 
+    @staticmethod
+    def _update_bar(bar, current, total, label=None):
+        if total > 0:
+            bar.setMaximum(total)
+            bar.setValue(min(current, total))
+        elif total == 0 and current == 0 and label and "Scanning" in label:
+            bar.setMaximum(0)
+            bar.setValue(0)
+        else:
+            bar.setMaximum(100)
+            bar.setValue(0)
+        if label is not None:
+            bar.setFormat(label)
+
     @Slot(int, int)
     def on_progress_updated(self, completed, total):
-        if total > 0:
-            self.progress.setMaximum(total)
-            self.progress.setValue(completed)
-        else:
-            self.progress.setMaximum(100)
-            self.progress.setValue(0)
+        self._update_bar(self.progress_overall, completed, total)
+
+    @Slot(int, int, str)
+    def on_overall_progress_updated(self, completed, total, label):
+        self._update_bar(self.progress_overall, completed, total, label)
+
+    @Slot(int, int, str)
+    def on_copy_progress_updated(self, completed, total, label):
+        self._update_bar(self.progress_copies, completed, total, label)
+
+    @Slot(int, int, str)
+    def on_file_progress_updated(self, current, maximum, label):
+        self._update_bar(self.progress_file, current, maximum, label)
+
+    @Slot(int, int, str)
+    def on_write_progress_updated(self, written, total, label):
+        self._update_bar(self.progress_write, written, total, label)
+
+    @Slot()
+    def do_cancel(self):
+        if self._active_task is not None and not self._active_task.done():
+            self.btn_cancel.setEnabled(False)
+            self.record_log.emit("Cancelling current operation...")
+            self._active_task.cancel()
+
+    @Slot()
+    def do_cleanup(self, storage_dir=None):
+        if not storage_dir or not isinstance(storage_dir, str):
+            storage_dir = self.txt_storage_path.text().strip()
+        if not storage_dir or not os.path.isdir(storage_dir):
+            storage_dir = QFileDialog.getExistingDirectory(
+                self,
+                "Select Work/Storage Directory to Clean Up",
+                self.txt_storage_path.text().strip() or os.getcwd(),
+            )
+            if not storage_dir:
+                return
+
+        src_dir = self.txt_path.text().strip()
+        if src_dir and os.path.abspath(storage_dir) == os.path.abspath(src_dir):
+            QMessageBox.critical(
+                self,
+                "Invalid Directory",
+                "The selected storage directory is the same as the source directory.\n"
+                "Cleanup cannot be performed on the source directory.",
+            )
+            return
+
+        inspection = combinatory.inspect_storage_directory(storage_dir)
+        num_symlinks = len(inspection["symlinks"])
+        num_files = len(inspection["working_files"])
+        num_dirs = len(inspection["directories"])
+
+        if num_symlinks == 0 and num_files == 0:
+            QMessageBox.information(
+                self,
+                "Clean Up Storage",
+                f"No symlinks or working files were found in:\n{storage_dir}",
+            )
+            return
+
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Clean Up Work/Storage Directory")
+        msg_box.setIcon(QMessageBox.Question)
+        msg_box.setText(
+            f"Directory:\n{storage_dir}\n\n"
+            f"Found {num_symlinks} symlink(s) pointing to source mail files, "
+            f"{num_files} working file(s), and {num_dirs} subdirectory(ies).\n\n"
+            "Choose a cleanup option:\n\n"
+            "• Remove Symlinks Only (Safe):\n"
+            "  Removes only the symlinks so the directory is safe to delete or inspect "
+            "outside of the tool without any risk to your source mail.\n\n"
+            "• Delete Working Files Too...:\n"
+            "  Removes symlinks and permanently deletes all generated working files "
+            "and directories in this storage location."
+        )
+
+        btn_symlinks_only = msg_box.addButton(
+            "Remove Symlinks Only (Safe)", QMessageBox.ActionRole
+        )
+        btn_delete_all = msg_box.addButton(
+            "Delete Working Files Too...", QMessageBox.DestructiveRole
+        )
+        btn_change_dir = msg_box.addButton(
+            "Choose Different Dir...", QMessageBox.ActionRole
+        )
+        btn_cancel = msg_box.addButton(QMessageBox.Cancel)
+        msg_box.setDefaultButton(btn_symlinks_only)
+
+        msg_box.exec()
+        clicked_btn = msg_box.clickedButton()
+
+        if clicked_btn == btn_cancel or clicked_btn is None:
+            return
+
+        if clicked_btn == btn_change_dir:
+            new_dir = QFileDialog.getExistingDirectory(
+                self,
+                "Select Work/Storage Directory to Clean Up",
+                storage_dir,
+            )
+            if new_dir:
+                self.do_cleanup(new_dir)
+            return
+
+        if clicked_btn == btn_symlinks_only:
+            res = combinatory.cleanup_storage_directory(
+                storage_dir, remove_working_files=False
+            )
+            msg = (
+                f"Storage cleanup completed: removed {res['symlinks_removed']} symlink(s) "
+                f"from {storage_dir}. It is now safe to delete or inspect outside of the tool."
+            )
+            self.log_receipt(msg)
+            self.status_bar.showMessage(
+                f"Removed {res['symlinks_removed']} symlink(s).", 5000
+            )
+            QMessageBox.information(self, "Cleanup Complete", msg)
+
+        elif clicked_btn == btn_delete_all:
+            confirm = QMessageBox.warning(
+                self,
+                "Confirm Permanent Deletion",
+                f"Are you sure you want to permanently delete all working files and directories in:\n\n"
+                f"{storage_dir}\n\n"
+                "This action cannot be undone.",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if confirm == QMessageBox.Yes:
+                res = combinatory.cleanup_storage_directory(
+                    storage_dir, remove_working_files=True
+                )
+                msg = (
+                    f"Storage cleanup completed: removed {res['symlinks_removed']} symlink(s), "
+                    f"{res['files_removed']} working file(s), and {res['dirs_removed']} directory(ies) "
+                    f"from {storage_dir}."
+                )
+                self.log_receipt(msg)
+                self.status_bar.showMessage(
+                    f"Deleted {res['symlinks_removed']} symlinks and {res['files_removed']} working files.",
+                    5000,
+                )
+                QMessageBox.information(self, "Cleanup Complete", msg)
+                self._update_action_button_states()
+
+    @Slot(str)
+    def on_operation_cancelled(self, message):
+        self._update_action_button_states()
+        self._update_bar(self.progress_overall, 0, 100, f"Cancelled: {message}")
+        self._update_bar(self.progress_copies, 0, 100, "Folder Copies: Cancelled")
+        self._update_bar(self.progress_file, 0, 1000, "Current Copy Read: Cancelled")
+        self._update_bar(
+            self.progress_write, 0, 100, "Deduplicated Output Write: Cancelled"
+        )
 
     @Slot()
     def path_changed(self):
+        self._update_action_button_states()
         path = self.txt_path.text().strip()
         search_enabled = os.path.isdir(path)
-        self.btn_search.setEnabled(search_enabled)
-        self.btn_dedup.setEnabled(False)
-        self.btn_move.setEnabled(False)
         self.record_log.emit(f"Search enabled: {search_enabled}")
+
+    @Slot()
+    def storage_path_changed(self):
+        storage_dir = self.txt_storage_path.text().strip()
+        if (
+            storage_dir and
+            os.path.isdir(storage_dir) and
+            self.runner.preplanner is not None
+        ):
+            recovered = self.runner.sync_with_disk_data(
+                storage_dir, self.txt_folder_pattern.text().strip()
+            )
+            if recovered > 0:
+                self._sync_selection_statuses()
+                self._update_all_sbd_summaries()
+                self.record_log.emit(
+                    f"Recovered {recovered} completed plans from {storage_dir}"
+                )
+        self._update_action_button_states()
 
     def _choose_directory(self, line_edit, caption):
         current_path = line_edit.text().strip()
@@ -296,6 +652,8 @@ class MainWindow(QMainWindow):
     def on_preplan_completed(self, preplanner):
         self.tree_model.removeRows(0, self.tree_model.rowCount())
         self._row_items_by_root.clear()
+        self._dir_rows_by_key.clear()
+        self._leaf_stats.clear()
         self.files_model.setStringList([])
 
         dir_nodes = {}
@@ -311,9 +669,11 @@ class MainWindow(QMainWindow):
                     dir_item = QStandardItem(part)
                     dir_item.setCheckable(True)
                     dir_item.setCheckState(Qt.Checked)
+                    dir_item.setData(dir_key, DIR_KEY_ROLE)
                     row = [dir_item] + [QStandardItem("") for _ in TREE_COLUMNS[1:]]
                     parent_item.appendRow(row)
                     dir_nodes[dir_key] = dir_item
+                    self._dir_rows_by_key[dir_key] = row
                 parent_item = dir_nodes[dir_key]
 
             leaf_name = parts[-1] if parts else root_file
@@ -325,11 +685,13 @@ class MainWindow(QMainWindow):
             source_bytes = sum(
                 os.path.getsize(f) for f in plan.files if os.path.exists(f)
             )
-            copies_item = QStandardItem(str(len(plan.files)))
+            num_copies = len(plan.files)
+            copies_item = QStandardItem(str(num_copies))
             size_item = QStandardItem(combinatory.format_bytes(source_bytes))
             total_msgs_item = QStandardItem("-")
             unique_msgs_item = QStandardItem("-")
             dedup_size_item = QStandardItem("-")
+            saved_item = QStandardItem("-")
             status_item = QStandardItem("Pending")
 
             row_items = [
@@ -339,14 +701,162 @@ class MainWindow(QMainWindow):
                 total_msgs_item,
                 unique_msgs_item,
                 dedup_size_item,
+                saved_item,
                 status_item,
             ]
             parent_item.appendRow(row_items)
             self._row_items_by_root[root_file] = row_items
+            self._leaf_stats[root_file] = {
+                "copies_done": 0,
+                "copies_total": num_copies,
+                "source_bytes": source_bytes,
+                "total_msgs": None,
+                "unique_msgs": None,
+                "dedup_bytes": None,
+                "status": "Pending",
+            }
 
+        storage_dir = self.txt_storage_path.text().strip()
+        if storage_dir and os.path.isdir(storage_dir):
+            recovered = self.runner.sync_with_disk_data(
+                storage_dir, self.txt_folder_pattern.text().strip()
+            )
+            if recovered > 0:
+                self._sync_selection_statuses()
+                self._update_all_sbd_summaries()
+                self.record_log.emit(
+                    f"Recovered {recovered} completed plans from {storage_dir}"
+                )
+
+        self._update_all_sbd_summaries()
         self.tv_mbox_files.expandAll()
-        self._update_dedup_button_state()
-        self.btn_move.setEnabled(False)
+        self._update_action_button_states()
+
+    def _compute_sbd_summary(self, dir_key):
+        prefix = dir_key + "/"
+        descendants = [
+            stats
+            for rf, stats in self._leaf_stats.items()
+            if rf.startswith(prefix)
+        ]
+        folder_count = len(descendants)
+        copies_done = sum(d["copies_done"] for d in descendants)
+        copies_total = sum(d["copies_total"] for d in descendants)
+        source_bytes = sum(d["source_bytes"] for d in descendants)
+
+        completed_leaves = [
+            d for d in descendants if d["dedup_bytes"] is not None
+        ]
+        completed_count = len(completed_leaves)
+        moved_count = sum(1 for d in descendants if d["status"] == "Moved")
+        skipped_count = sum(1 for d in descendants if d["status"] == "Skipped")
+        selected_count = folder_count - skipped_count
+        active_count = sum(
+            1
+            for d in descendants
+            if d["status"]
+            not in ("Pending", "Skipped", "Deduplicated", "Moved", "Failed")
+        )
+
+        if completed_leaves:
+            total_msgs = sum(d["total_msgs"] or 0 for d in completed_leaves)
+            unique_msgs = sum(d["unique_msgs"] or 0 for d in completed_leaves)
+            dedup_bytes = sum(d["dedup_bytes"] or 0 for d in completed_leaves)
+            comp_source_bytes = sum(d["source_bytes"] for d in completed_leaves)
+            saved_bytes = max(0, comp_source_bytes - dedup_bytes)
+            saved_pct = (
+                (saved_bytes / comp_source_bytes) * 100.0
+                if comp_source_bytes > 0
+                else 0.0
+            )
+        else:
+            total_msgs = None
+            unique_msgs = None
+            dedup_bytes = None
+            saved_bytes = None
+            saved_pct = 0.0
+
+        if folder_count > 0 and skipped_count == folder_count:
+            status_text = "Skipped"
+        elif selected_count > 0 and moved_count == selected_count:
+            status_text = f"Moved ({moved_count}/{selected_count})"
+        elif selected_count > 0 and completed_count == selected_count:
+            status_text = f"Deduplicated ({completed_count}/{selected_count})"
+        elif active_count > 0 or completed_count > 0:
+            status_text = f"Active ({completed_count}/{selected_count} done)"
+        elif skipped_count > 0:
+            status_text = f"Pending ({selected_count}/{folder_count} folders)"
+        else:
+            status_text = f"Pending ({folder_count} folders)"
+
+        return {
+            "folder_count": folder_count,
+            "completed_count": completed_count,
+            "copies_done": copies_done,
+            "copies_total": copies_total,
+            "source_bytes": source_bytes,
+            "total_msgs": total_msgs,
+            "unique_msgs": unique_msgs,
+            "dedup_bytes": dedup_bytes,
+            "saved_bytes": saved_bytes,
+            "saved_pct": saved_pct,
+            "status_text": status_text,
+        }
+
+    def _update_sbd_summary_row(self, dir_key):
+        row = self._dir_rows_by_key.get(dir_key)
+        if row is None:
+            return
+        summary = self._compute_sbd_summary(dir_key)
+        if summary["copies_done"] > 0:
+            row[1].setText(
+                f"{summary['copies_done']} / {summary['copies_total']}"
+            )
+        else:
+            row[1].setText(str(summary["copies_total"]))
+        row[2].setText(combinatory.format_bytes(summary["source_bytes"]))
+        if summary["total_msgs"] is not None:
+            removed = max(0, summary["total_msgs"] - summary["unique_msgs"])
+            row[3].setText(f"{summary['total_msgs']:,}")
+            row[4].setText(f"{summary['unique_msgs']:,} (-{removed:,})")
+            row[5].setText(combinatory.format_bytes(summary["dedup_bytes"]))
+            row[6].setText(
+                f"{combinatory.format_bytes(summary['saved_bytes'])} "
+                f"({summary['saved_pct']:.1f}%)"
+            )
+        else:
+            row[3].setText("-")
+            row[4].setText("-")
+            row[5].setText("-")
+            row[6].setText("-")
+        row[7].setText(summary["status_text"])
+
+    def _update_ancestor_sbd_summaries(self, root_file):
+        parts = [p for p in root_file.split("/") if p]
+        prefix_parts = []
+        for part in parts[:-1]:
+            prefix_parts.append(part)
+            dir_key = "/".join(prefix_parts)
+            self._update_sbd_summary_row(dir_key)
+
+    def _update_all_sbd_summaries(self):
+        for dir_key in self._dir_rows_by_key:
+            self._update_sbd_summary_row(dir_key)
+
+    def _sync_selection_statuses(self):
+        for root_file, row_items in self._row_items_by_root.items():
+            leaf = self._leaf_stats.get(root_file)
+            if leaf is None:
+                continue
+            if leaf["status"] in ("Pending", "Skipped"):
+                new_status = (
+                    "Pending"
+                    if row_items[0].checkState() == Qt.Checked
+                    else "Skipped"
+                )
+                leaf["status"] = new_status
+                row_items[7].setText(new_status)
+        self._update_all_sbd_summaries()
 
     def _on_tree_item_changed(self, item):
         if item.column() != 0:
@@ -355,6 +865,7 @@ class MainWindow(QMainWindow):
         self.tree_model.blockSignals(True)
         try:
             self._set_children_check_state(item, state)
+            self._sync_selection_statuses()
         finally:
             self.tree_model.blockSignals(False)
         self._update_dedup_button_state()
@@ -374,7 +885,7 @@ class MainWindow(QMainWindow):
         return checked
 
     def _update_dedup_button_state(self):
-        self.btn_dedup.setEnabled(len(self.get_checked_root_files()) > 0)
+        self._update_action_button_states()
 
     @Slot()
     def select_all_folders(self):
@@ -389,6 +900,7 @@ class MainWindow(QMainWindow):
         try:
             root = self.tree_model.invisibleRootItem()
             self._set_children_check_state(root, state)
+            self._sync_selection_statuses()
         finally:
             self.tree_model.blockSignals(False)
         self._update_dedup_button_state()
@@ -402,8 +914,35 @@ class MainWindow(QMainWindow):
             return
         root_file = item.data(Qt.UserRole)
         if not root_file or self.runner.preplanner is None:
-            self.lbl_group_details.setText(f"Directory: {item.text()}")
-            self.files_model.setStringList([])
+            dir_key = item.data(DIR_KEY_ROLE)
+            if dir_key and dir_key in self._dir_rows_by_key:
+                summary = self._compute_sbd_summary(dir_key)
+                self.lbl_group_details.setText(
+                    f"Subtree Summary: {dir_key} "
+                    f"({summary['folder_count']} folders, {summary['copies_total']} copies)"
+                )
+                details = [
+                    f"Subtree Path: {dir_key}",
+                    f"Logical Subfolders: {summary['folder_count']} ({summary['completed_count']} deduplicated)",
+                    f"Total MBOX Copies: {summary['copies_done']} / {summary['copies_total']}",
+                    f"Total Source Size: {combinatory.format_bytes(summary['source_bytes'])}",
+                ]
+                if summary["dedup_bytes"] is not None:
+                    removed = max(
+                        0, (summary["total_msgs"] or 0) - (summary["unique_msgs"] or 0)
+                    )
+                    details.extend(
+                        [
+                            f"Messages Indexed: {summary['total_msgs']:,}",
+                            f"Unique Messages Kept: {summary['unique_msgs']:,} ({removed:,} duplicates removed)",
+                            f"Deduplicated Size: {combinatory.format_bytes(summary['dedup_bytes'])}",
+                            f"Space Saved: {combinatory.format_bytes(summary['saved_bytes'])} ({summary['saved_pct']:.1f}%)",
+                        ]
+                    )
+                self.files_model.setStringList(details)
+            else:
+                self.lbl_group_details.setText(f"Directory: {item.text()}")
+                self.files_model.setStringList([])
             return
         plan = dict(self.runner.preplanner.plans()).get(root_file)
         if plan is not None:
@@ -423,32 +962,69 @@ class MainWindow(QMainWindow):
             self.runner.deduplicate_selected(options, selected)
         )
 
+    @Slot(str, str, str)
+    def on_plan_live_status_updated(self, root_file, copies_text, status_text):
+        row_items = self._row_items_by_root.get(root_file)
+        if row_items is None:
+            return
+        row_items[1].setText(copies_text)
+        row_items[7].setText(status_text)
+        leaf = self._leaf_stats.get(root_file)
+        if leaf is not None:
+            parts = copies_text.split("/")
+            if len(parts) == 2:
+                try:
+                    leaf["copies_done"] = int(parts[0].strip())
+                except ValueError:
+                    pass
+            leaf["status"] = status_text
+            self._update_ancestor_sbd_summaries(root_file)
+
     @Slot(str, object, str)
     def on_plan_dedup_updated(self, root_file, plan, status):
         row_items = self._row_items_by_root.get(root_file)
         if row_items is None:
             return
         stats = (plan.combinatory or {}).get(planner_keys.plan_stats, {})
+        leaf = self._leaf_stats.get(root_file)
         if stats:
-            row_items[3].setText(
-                str(stats.get(planner_keys.plan_stats_total_messages, 0))
+            total_msgs = stats.get(planner_keys.plan_stats_total_messages, 0)
+            unique_msgs = stats.get(planner_keys.plan_stats_unique_messages, 0)
+            source_bytes = stats.get(planner_keys.plan_stats_source_bytes, 0)
+            dedup_bytes = stats.get(planner_keys.plan_stats_dedup_bytes, 0)
+            saved_bytes = max(0, source_bytes - dedup_bytes)
+            saved_pct = (
+                (saved_bytes / source_bytes) * 100.0 if source_bytes > 0 else 0.0
             )
-            row_items[4].setText(
-                str(stats.get(planner_keys.plan_stats_unique_messages, 0))
+            removed = max(0, total_msgs - unique_msgs)
+            row_items[1].setText(f"{len(plan.files)} / {len(plan.files)}")
+            row_items[3].setText(f"{total_msgs:,}")
+            row_items[4].setText(f"{unique_msgs:,} (-{removed:,})")
+            row_items[5].setText(combinatory.format_bytes(dedup_bytes))
+            row_items[6].setText(
+                f"{combinatory.format_bytes(saved_bytes)} ({saved_pct:.1f}%)"
             )
-            row_items[5].setText(
-                combinatory.format_bytes(
-                    stats.get(planner_keys.plan_stats_dedup_bytes, 0)
-                )
-            )
-        row_items[6].setText(status)
+            if leaf is not None:
+                leaf["copies_done"] = len(plan.files)
+                leaf["total_msgs"] = total_msgs
+                leaf["unique_msgs"] = unique_msgs
+                leaf["dedup_bytes"] = dedup_bytes
+        row_items[7].setText(status)
+        if status.startswith("Failed"):
+            err_details = stats.get("error", status)
+            row_items[7].setToolTip(f"{status}\n{stats.get('traceback', '')}")
+            self.txt_logs.append(f"FAILED: {root_file} -> {err_details}")
+        else:
+            row_items[7].setToolTip("")
+        if leaf is not None:
+            leaf["status"] = status
+            self._update_ancestor_sbd_summaries(root_file)
 
     @Slot(object, str, str)
     def on_dedup_completed(self, worker_results, temp_directory, reconstructed_root):
         if not self.txt_output_path.text().strip():
             self.txt_output_path.setText(reconstructed_root)
-        self._update_dedup_button_state()
-        self.btn_move.setEnabled(len(worker_results) > 0)
+        self._update_action_button_states()
 
     @Slot()
     def do_move(self):
@@ -456,6 +1032,19 @@ class MainWindow(QMainWindow):
         target_root = (
             options.output_location or self.runner.reconstructed_root
         )
+        # If in-memory results are empty, recover from disk run data
+        if not any(r[2] is not None for r in self.runner.worker_results):
+            storage_path = (
+                self.runner.temp_directory or
+                self.txt_storage_path.text().strip()
+            )
+            disk_results = combinatory.discover_disk_results(storage_path)
+            if disk_results:
+                self.runner.worker_results = disk_results
+                self.record_log.emit(
+                    f"Recovered {len(disk_results)} deduplicated folder outputs from {storage_path} for moving."
+                )
+
         summary = combinatory.build_summary_report(
             options,
             self.runner.temp_directory,
@@ -486,3 +1075,4 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def on_move_completed(self, operation_json_path):
         self.record_log.emit(f"Operation completed: {operation_json_path}")
+        self._update_action_button_states()

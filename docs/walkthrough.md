@@ -279,3 +279,28 @@ Runs the full preplan $\rightarrow$ plan $\rightarrow$ parallel deduplication $\
 | `--location`, `-l` | Yes | — | Directory containing MBOX files (or planner symlinks) to deduplicate. |
 | `--hash-storage`, `-hs` | No | `:memory:` | SQLite database file path for storing message hashes. |
 | `--msg-hash-source` | No | `parsed` | Hash mode for deduplication (`parsed` or `disk`). |
+| `--max-open-files` | No | `64` | Maximum number of files allowed to be open simultaneously. |
+
+### `tb-dedup cleanup`
+Safely removes temporary plan symlinks pointing back to source mailbox files so the storage directory can be deleted outside the tool without risk to original mail, and optionally purges working files.
+
+| Flag | Required | Default | Description |
+| :--- | :---: | :---: | :--- |
+| `--storage-location`, `-sl` | Yes | — | Directory location of the work/storage data to clean up. |
+| `--all`, `-a` | No | `False` | Also remove generated working files and directories (not just symlinks). |
+| `--yes`, `-y` | No | `False` | Automatically confirm deletion of working files without prompting. |
+
+---
+
+## 9. Frequently Asked Questions (FAQ)
+
+### What happens when there is only 1 copy of a folder? Does it get copied to the output or skipped?
+By default, it is **copied to the output** (not skipped). The tool processes every identified mailbox folder to ensure the reconstructed Thunderbird folder tree is complete. During deduplication, single-copy folders are scanned for any internal duplicate messages (e.g. repeated deliveries, duplicate drafts) and written to the output tree at their corresponding relative paths. If you wish to exclude a specific folder, you can uncheck it in the GUI tree view (its status will transition to `Skipped`).
+
+### What if a folder has zero entries (empty folder in the directory structure)? Does it get skipped?
+It depends on how the empty folder is stored:
+- **Empty directory on disk (e.g. an empty `*.sbd` directory):** It is **skipped**. The scanner searches for mailbox files; directories with no mailbox files inside them produce no entries and are not recreated in the output tree.
+- **Empty mailbox (a 0-byte MBOX file):** It is **copied and preserved**. In Thunderbird, empty folders are represented on disk as 0-byte files without an extension. The tool recognizes these as empty files (0 messages), writes a corresponding clean 0-byte mailbox in the reconstructed tree, and ensures Thunderbird retains the empty folder in your profile's folder hierarchy.
+
+### Is it safe to delete the work/storage directory outside of the tool?
+Before deleting a work/storage directory manually, run the cleanup function (via the **Clean Up Storage...** button in the GUI or `tb-dedup cleanup -sl <path>` on the CLI). Cleanup removes internal symlinks pointing back to your real source mailbox files, ensuring you can safely inspect, archive, or delete the storage directory without any risk of affecting original mail files.

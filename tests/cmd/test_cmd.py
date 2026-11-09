@@ -87,6 +87,57 @@ class TestCmd(base.AsyncioTestCase):
                 self.assertEqual(ret, 0)
                 mock_gui.assert_awaited_once()
 
+            # 5. cleanup subcommand with symlinks only
+            with mock.patch.object(
+                sys,
+                "argv",
+                ["tb-dedup", "cleanup", "-sl", cwd.temp_dir.name],
+            ):
+                ret = await cmd.asyncMain()
+                self.assertEqual(ret, 0)
+
+            # 6. cleanup subcommand with non-existent directory -> returns 1
+            with mock.patch.object(
+                sys,
+                "argv",
+                ["tb-dedup", "cleanup", "-sl", "/nonexistent/storage/path"],
+            ):
+                ret = await cmd.asyncMain()
+                self.assertEqual(ret, 1)
+
+            # 7. cleanup subcommand with --all and declined confirmation prompt
+            storage_dir = cwd.temp_dir.name
+            with mock.patch.object(
+                sys,
+                "argv",
+                ["tb-dedup", "cleanup", "-sl", storage_dir, "--all"],
+            ), mock.patch(
+                "thunderbirddedup.combinatory.inspect_storage_directory",
+                return_value={
+                    "symlinks": ["link1"],
+                    "working_files": ["f1"],
+                    "directories": ["d1"],
+                },
+            ), mock.patch("builtins.input", return_value="n"):
+                ret = await cmd.asyncMain()
+                self.assertEqual(ret, 0)
+
+            # 8. cleanup subcommand with --all and --yes
+            with mock.patch.object(
+                sys,
+                "argv",
+                ["tb-dedup", "cleanup", "-sl", storage_dir, "--all", "--yes"],
+            ), mock.patch(
+                "thunderbirddedup.combinatory.inspect_storage_directory",
+                return_value={
+                    "symlinks": ["link1"],
+                    "working_files": ["f1"],
+                    "directories": ["d1"],
+                },
+            ):
+                ret = await cmd.asyncMain()
+                self.assertEqual(ret, 0)
+
     def test_main_tui_and_gui(self):
         with mock.patch.object(
             sys,

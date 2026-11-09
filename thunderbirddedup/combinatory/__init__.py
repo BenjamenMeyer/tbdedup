@@ -23,6 +23,7 @@ import os.path
 import resource
 import shutil
 import tempfile
+import traceback
 
 from thunderbirddedup import (
     db,
@@ -42,6 +43,22 @@ from thunderbirddedup.utils import (
 LOG = logging.getLogger(__name__)
 
 DEFAULT_MAX_CONCURRENT_PLANS = 32
+
+
+def ensure_max_open_files(target_limit=524288):
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        new_soft = min(hard, max(soft, target_limit))
+        if new_soft > soft:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
+            LOG.info(
+                f"Raised open file limit from soft={soft} to soft={new_soft} (hard={hard})"
+            )
+            return new_soft
+        return soft
+    except Exception as ex:
+        LOG.warning(f"Unable to adjust open file limit: {ex}")
+        return None
 
 
 def format_bytes(num_bytes):
@@ -146,8 +163,17 @@ async def runDedup(
             plan,
             output_file,
         )
-    except Exception:
-        LOG.exception(f'Failed while carrying out plan for {output_directory}')
+    except asyncio.CancelledError:
+        raise
+    except Exception as ex:
+        err_msg = f"{type(ex).__name__}: {ex}"
+        tb = traceback.format_exc()
+        LOG.exception(f'Failed while carrying out plan for {output_directory}: {err_msg}')
+        if plan.combinatory is not None:
+            stats = plan.combinatory.get(planner_keys.plan_stats, {})
+            stats["error"] = err_msg
+            stats["traceback"] = tb
+            plan.combinatory[planner_keys.plan_stats] = stats
         return (
             output_directory,
             plan,
@@ -163,6 +189,131 @@ def get_plan_output_directory(folder_pattern, temp_directory, root_file):
         temp_directory,
         f"{final_path}_Dedup"
     )
+
+
+def check_plan_completed_on_disk(output_directory):
+    if not output_directory or not os.path.isdir(output_directory):
+        return None, None
+    plan_json = os.path.join(output_directory, "plan_output.json")
+    if not os.path.exists(plan_json):
+        return None, None
+    try:
+        plan_data = json.load_from_file(plan_json)
+        mbox_path = (
+            plan_data.get("combinatory", {})
+            .get(planner_keys.plan_location, {})
+            .get(planner_keys.plan_mbox)
+        )
+        if mbox_path and os.path.exists(mbox_path):
+            return plan_data, mbox_path
+    except Exception as ex:
+        LOG.warning(f"Error checking disk plan at {plan_json}: {ex}")
+    return None, None
+
+
+def discover_disk_results(storage_location):
+    if not storage_location or not os.path.isdir(storage_location):
+        return []
+    results = []
+    for entry in sorted(os.listdir(storage_location)):
+        entry_dir = os.path.join(storage_location, entry)
+        if os.path.isdir(entry_dir) and entry.endswith("_Dedup"):
+            plan_data, mbox_path = check_plan_completed_on_disk(entry_dir)
+            if plan_data is not None and mbox_path is not None:
+                results.append((entry_dir, plan_data, mbox_path))
+    return results
+
+
+def inspect_storage_directory(storage_directory):
+    if not storage_directory or not os.path.isdir(storage_directory):
+        return {
+            "symlinks": [],
+            "working_files": [],
+            "directories": [],
+        }
+
+    symlinks = []
+    working_files = []
+    directories = []
+
+    for root, dirs, files in os.walk(storage_directory, followlinks=False):
+        for d in dirs:
+            dir_path = os.path.join(root, d)
+            if os.path.islink(dir_path):
+                symlinks.append(dir_path)
+            else:
+                directories.append(dir_path)
+
+        for f in files:
+            file_path = os.path.join(root, f)
+            if os.path.islink(file_path):
+                symlinks.append(file_path)
+            else:
+                working_files.append(file_path)
+
+    return {
+        "symlinks": symlinks,
+        "working_files": working_files,
+        "directories": directories,
+    }
+
+
+def cleanup_storage_directory(storage_directory, remove_working_files=False):
+    if not storage_directory or not os.path.isdir(storage_directory):
+        return {
+            "symlinks_removed": 0,
+            "files_removed": 0,
+            "dirs_removed": 0,
+            "storage_dir": storage_directory,
+        }
+
+    symlinks_removed = 0
+    files_removed = 0
+    dirs_removed = 0
+
+    # 1. Remove all symlinks first
+    for root, dirs, files in os.walk(storage_directory, followlinks=False):
+        for name in files + dirs:
+            path = os.path.join(root, name)
+            if os.path.islink(path):
+                try:
+                    os.unlink(path)
+                    symlinks_removed += 1
+                    LOG.info(f"Removed symlink: {path}")
+                except Exception as ex:
+                    LOG.warning(f"Failed to remove symlink {path}: {ex}")
+
+    # 2. If requested, remove working files and subdirectories
+    if remove_working_files:
+        for root, dirs, files in os.walk(
+            storage_directory, topdown=False, followlinks=False
+        ):
+            for f in files:
+                fpath = os.path.join(root, f)
+                if not os.path.islink(fpath):
+                    try:
+                        os.remove(fpath)
+                        files_removed += 1
+                        LOG.debug(f"Removed working file: {fpath}")
+                    except Exception as ex:
+                        LOG.warning(f"Failed to remove file {fpath}: {ex}")
+
+            for d in dirs:
+                dpath = os.path.join(root, d)
+                if not os.path.islink(dpath):
+                    try:
+                        os.rmdir(dpath)
+                        dirs_removed += 1
+                        LOG.debug(f"Removed directory: {dpath}")
+                    except Exception as ex:
+                        LOG.warning(f"Failed to remove directory {dpath}: {ex}")
+
+    return {
+        "symlinks_removed": symlinks_removed,
+        "files_removed": files_removed,
+        "dirs_removed": dirs_removed,
+        "storage_dir": storage_directory,
+    }
 
 
 def build_summary_report(
