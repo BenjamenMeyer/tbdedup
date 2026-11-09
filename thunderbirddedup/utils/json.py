@@ -17,6 +17,8 @@ limitations under the License.
 import io
 import json
 
+from thunderbirddedup.utils import file_tracker
+
 
 def _json_dumper(obj):
     if hasattr(obj, "__json__"):
@@ -30,7 +32,7 @@ def _json_dumper(obj):
 
 
 def dump_to_file(filename, data):
-    with open(filename, "wt") as json_output:
+    with file_tracker.open_file(filename, "wt") as json_output:
         json.dump(
             data,
             json_output,
@@ -39,3 +41,12 @@ def dump_to_file(filename, data):
             # default=lambda __o: __o.__json__() if hasattr(__o, "__json__") else __o
             default=_json_dumper,
         )
+
+
+def load_from_file(filename):
+    with file_tracker.open_file(filename, "rt", encoding="utf-8") as json_input:
+        return json.load(json_input)
+
+
+def load_from_string(data):
+    return json.loads(data)

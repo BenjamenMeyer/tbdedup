@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import logging
 import logging.config
+import os
 import sys
 
 # import asyncqt
@@ -30,6 +31,7 @@ from thunderbirddedup.planner import (
     plan as planner_plan,
     walk as planner_walk,
 )
+from thunderbirddedup.utils import file_tracker
 
 LOG = logging.getLogger(__name__)
 
@@ -37,6 +39,57 @@ LOG = logging.getLogger(__name__)
 async def asyncGui(options):
     from thunderbirddedup import gui
     return await gui.asyncGui(options)
+
+
+async def asyncCleanup(options):
+    storage_dir = options.storage_location
+    if not storage_dir or not os.path.isdir(storage_dir):
+        print(f"Error: Storage directory '{storage_dir}' does not exist.")
+        return 1
+
+    inspection = combinatory.inspect_storage_directory(storage_dir)
+    num_symlinks = len(inspection["symlinks"])
+    num_files = len(inspection["working_files"])
+    num_dirs = len(inspection["directories"])
+
+    print(
+        f"Inspecting storage directory: {storage_dir}\n"
+        f"Found {num_symlinks} symlinks, {num_files} working files, {num_dirs} subdirectories."
+    )
+
+    if num_symlinks == 0 and num_files == 0:
+        print("Nothing to clean up.")
+        return 0
+
+    remove_files = options.all
+    if remove_files and not options.yes:
+        try:
+            prompt = (
+                f"Are you sure you want to permanently delete all {num_files} "
+                f"working files and {num_dirs} subdirectories in '{storage_dir}'? [y/N]: "
+            )
+            confirm = input(prompt)
+        except (EOFError, KeyboardInterrupt):
+            print("\nOperation cancelled.")
+            return 0
+        if confirm.strip().lower() not in ("y", "yes"):
+            print("Operation aborted by user.")
+            return 0
+
+    res = combinatory.cleanup_storage_directory(
+        storage_dir, remove_working_files=remove_files
+    )
+    if remove_files:
+        print(
+            f"Cleanup complete: removed {res['symlinks_removed']} symlinks, "
+            f"{res['files_removed']} working files, and {res['dirs_removed']} directories."
+        )
+    else:
+        print(
+            f"Cleanup complete: removed {res['symlinks_removed']} symlinks. "
+            "It is now safe to delete or inspect outside of the tooling."
+        )
+    return 0
 
 
 async def asyncMain():
@@ -78,6 +131,13 @@ async def asyncMain():
         choices=message_hash_source_choices,
         help='Specify which source to use for the hash. `disk` means using the raw message off the disk. `parsed` means using everything but the MBOX FROM line that identifies the message',
         default='parsed',
+    )
+    dedup_parser.add_argument(
+        '--max-open-files',
+        default=None,
+        type=int,
+        required=False,
+        help="Maximum number of files allowed to be open simultaneously",
     )
     dedup_parser.set_defaults(func=dedup.asyncDedup)
 
@@ -173,9 +233,42 @@ async def asyncMain():
         required=False,
         help="Automatically confirm moving deduplicated MBOX files without prompting",
     )
+    combinatory_parser.add_argument(
+        '--max-open-files',
+        default=None,
+        type=int,
+        required=False,
+        help="Maximum number of files allowed to be open simultaneously",
+    )
     combinatory_parser.set_defaults(func=combinatory.asyncCombinatory)
 
+    cleanup_parser = subparsers.add_parser('cleanup')
+    cleanup_parser.add_argument(
+        '--storage-location', '-sl',
+        default=None,
+        type=str,
+        required=True,
+        help='Directory location of the work/storage data to clean up',
+    )
+    cleanup_parser.add_argument(
+        '--all', '-a',
+        default=False,
+        action='store_true',
+        required=False,
+        help='Also remove generated working files (not just symlinks)',
+    )
+    cleanup_parser.add_argument(
+        '--yes', '-y',
+        default=False,
+        action='store_true',
+        required=False,
+        help='Automatically confirm deletion of working files without prompting',
+    )
+    cleanup_parser.set_defaults(func=asyncCleanup)
+
     arguments = argument_parser.parse_args()
+    if getattr(arguments, 'max_open_files', None) is not None:
+        file_tracker.set_max_open_files(arguments.max_open_files)
     # log config is optional
     if arguments.log_config is not None:
         logging.config.fileConfig(arguments.log_config)
@@ -200,6 +293,10 @@ async def asyncMain():
     except Exception:
         LOG.exception('Error during processing')
         result = -1
+    finally:
+        all_closed, leaks = file_tracker.verify_all_closed(log_leaks=True)
+        if not all_closed:
+            LOG.warning(f"Process exiting with {len(leaks)} unclosed file(s)")
 
     if result is not None:
         return result

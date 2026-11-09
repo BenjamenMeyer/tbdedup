@@ -17,6 +17,7 @@ import logging
 import re
 import sys
 
+from thunderbirddedup.utils import file_tracker
 from . import mboxmessage
 
 LOG = logging.getLogger(__name__)
@@ -66,7 +67,7 @@ class Mailbox(object):
     @classmethod
     def detect_mbox_type(cls, filename):
         LOG.info(f'Checking file {filename}')
-        with open(filename, 'rb') as data_input:
+        with file_tracker.open_file(filename, 'rb') as data_input:
             inMessage = False
             fromIsPrepended = False
             hasContentLength = False
@@ -189,7 +190,7 @@ class Mailbox(object):
         return record_boundary_marker
 
     def buildSummary(self):
-        with open(self.filename, 'rb') as data_input:
+        with file_tracker.open_file(self.filename, 'rb') as data_input:
             data_input.seek(0, 2)  # move to the end of the file
             file_length = data_input.tell()
             data_input.seek(0, 0)  # move back to the start of the file
@@ -211,7 +212,7 @@ class Mailbox(object):
 
             def get_msg_file(counter):
                 if self.debug_enabled:
-                    return open(f"msg{counter}", "wb")
+                    return file_tracker.open_file(f"msg{counter}", "wb")
                 return None
 
             # Create the first file for output
@@ -338,7 +339,7 @@ class Mailbox(object):
 
     @classmethod
     def getMessageFromFile(cls, msgData) -> bytes:
-        with open(msgData['location'], 'rb') as data_input:
+        with file_tracker.open_file(msgData['location'], 'rb') as data_input:
             data_input.seek(0, 2)  # move to the end of the file
             file_length = data_input.tell()
             data_input.seek(0, 0)  # move back to the start of the file
@@ -347,7 +348,7 @@ class Mailbox(object):
                 return b''
 
             length = msgData['end_offset'] - msgData['start_offset']
-            LOG.info(f'Reading - Record[{msgData["messageid"]}] Start Offset: {msgData["start_offset"]} End Ofset: {msgData["end_offset"]} - Length: {length}')
+            LOG.debug(f'Reading - Record[{msgData["messageid"]}] Start Offset: {msgData["start_offset"]} End Ofset: {msgData["end_offset"]} - Length: {length}')
             if length > 0:
                 data_input.seek(msgData['start_offset'])
                 return data_input.read(length)

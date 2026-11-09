@@ -20,6 +20,7 @@ import logging
 import os
 import os.path
 import tempfile
+import traceback
 
 from PySide6.QtCore import (
     QObject,
@@ -37,6 +38,7 @@ from thunderbirddedup.planner import (
     walk as planner_walk,
 )
 from thunderbirddedup.utils import (
+    file_tracker,
     json,
     time,
 )
@@ -56,6 +58,7 @@ class TbDedupOptions(object):
         msg_hash_source="parsed",
         hash_storage=None,
         yes=False,
+        max_open_files=None,
     ):
         self.location = location
         self.storage_location = storage_location
@@ -65,6 +68,7 @@ class TbDedupOptions(object):
         self.msg_hash_source = msg_hash_source
         self.hash_storage = hash_storage
         self.yes = yes
+        self.max_open_files = max_open_files
 
 
 class TbDedupRunner(QObject):
@@ -92,6 +96,7 @@ class TbDedupRunner(QObject):
 
     async def scan_and_preplan(self, options):
         try:
+            combinatory.ensure_max_open_files()
             self.record_log.emit(f"Scanning for MBOX files under {options.location}...")
             self.overall_progress_updated.emit(
                 0, 0, f"Scanning directory tree under {options.location}..."
@@ -137,6 +142,7 @@ class TbDedupRunner(QObject):
             raise
 
     async def deduplicate_selected(self, options, selected_root_files):
+        combinatory.ensure_max_open_files()
         if self.preplanner is None or not selected_root_files:
             self.record_log.emit("No logical folder groups selected for deduplication.")
             return []
@@ -170,6 +176,9 @@ class TbDedupRunner(QObject):
         self.copy_progress_updated.emit(0, 1, "Folder Copies: Waiting...")
         self.file_progress_updated.emit(0, 1000, "Current Copy Read: Waiting...")
         self.write_progress_updated.emit(0, 1, "Deduplicated Output Write: Waiting...")
+
+        if getattr(options, "max_open_files", None) is not None:
+            file_tracker.set_max_open_files(options.max_open_files)
 
         semaphore = asyncio.Semaphore(1)
         completed_count = 0
@@ -215,87 +224,122 @@ class TbDedupRunner(QObject):
                 use_disk = dedup.source_option_to_boolean(options.msg_hash_source)
 
                 async def _run_single_plan(rf, pl, out_dir, hash_db):
-                    async with semaphore:
-                        await planner_plan.generate(
-                            out_dir,
-                            pl.files,
-                            pl.combinatory,
-                        )
-                        short_rf = os.path.basename(rf) or rf
-                        num_copies = len(pl.files)
+                    short_rf = os.path.basename(rf) or rf
+                    num_copies = len(pl.files)
 
-                    def on_copy_progress(done, total, fname):
-                        bname = os.path.basename(fname) if fname else ""
-                        suffix = f" ({bname})" if bname else ""
-                        self.copy_progress_updated.emit(
-                            done,
-                            max(total, 1),
-                            f"Folder Copies [{short_rf}]: {done} / {total}{suffix}",
-                        )
-                        self.plan_live_status_updated.emit(
-                            rf,
-                            f"{done} / {total}",
-                            f"Indexing {done}/{total}",
-                        )
+                    # Check if already completed on disk in existing run directory
+                    existing_plan, existing_mbox = combinatory.check_plan_completed_on_disk(out_dir)
+                    if existing_plan is not None and existing_mbox is not None:
+                        pl.combinatory = existing_plan.get("combinatory", pl.combinatory)
+                        make_plan_completed(rf)()
+                        self.plan_dedup_updated.emit(rf, pl, "Deduplicated")
+                        self.record_log.emit(f"Reusing existing deduplicated MBOX for {short_rf}")
+                        return (out_dir, pl, existing_mbox)
 
-                    def on_file_progress(fname, cur_bytes, tot_bytes, msg_count):
-                        permille = (
-                            int((cur_bytes / tot_bytes) * 1000)
-                            if tot_bytes > 0
-                            else 1000
-                        )
-                        pct = (
-                            (cur_bytes / tot_bytes) * 100.0
-                            if tot_bytes > 0
-                            else 100.0
-                        )
-                        bname = os.path.basename(fname)
-                        self.file_progress_updated.emit(
-                            permille,
-                            1000,
-                            f"Reading {bname}: {combinatory.format_bytes(cur_bytes)} / "
-                            f"{combinatory.format_bytes(tot_bytes)} ({pct:.1f}%) — {msg_count:,} msgs",
-                        )
-
-                    def on_write_progress(written, total_unique):
-                        self.write_progress_updated.emit(
-                            written,
-                            max(total_unique, 1),
-                            f"Writing Deduplicated MBOX [{short_rf}]: {written:,} / {total_unique:,} unique msgs",
-                        )
-                        if total_unique > 0:
-                            self.plan_live_status_updated.emit(
-                                rf,
-                                f"{num_copies} / {num_copies}",
-                                f"Writing {written:,}/{total_unique:,}",
+                    try:
+                        async with semaphore:
+                            await planner_plan.generate(
+                                out_dir,
+                                pl.files,
+                                pl.combinatory,
                             )
 
-                    res_dir, res_plan, res_file = await combinatory.runDedup(
-                        out_dir,
-                        pl,
-                        dedup.dedupper(
-                            [
-                                os.path.join(
-                                    pl.combinatory[planner_keys.plan_location][planner_keys.plan_output],
-                                    link_file,
+                            def on_copy_progress(done, total, fname):
+                                bname = os.path.basename(fname) if fname else ""
+                                suffix = f" ({bname})" if bname else ""
+                                self.copy_progress_updated.emit(
+                                    done,
+                                    max(total, 1),
+                                    f"Folder Copies [{short_rf}]: {done} / {total}{suffix}",
                                 )
-                                for link_file in pl.combinatory[planner_keys.plan_file_map].keys()
-                            ],
-                            hash_db,
-                            use_disk_data_for_hash=use_disk,
-                            output_base_path=pl.combinatory[planner_keys.plan_location][planner_keys.plan_output],
-                            copy_progress_callback=on_copy_progress,
-                            file_progress_callback=on_file_progress,
-                            write_progress_callback=on_write_progress,
-                        ),
-                        counter_update=make_plan_completed(rf),
-                        semaphore=None,
-                        dedup_hash_storage=hash_db,
-                        use_disk_data_for_hash=use_disk,
-                    )
-                    status = "Deduplicated" if res_file is not None else "Failed"
-                    self.plan_dedup_updated.emit(rf, res_plan, status)
-                    return (res_dir, res_plan, res_file)
+                                self.plan_live_status_updated.emit(
+                                    rf,
+                                    f"{done} / {total}",
+                                    f"Indexing {done}/{total}",
+                                )
+
+                            def on_file_progress(fname, cur_bytes, tot_bytes, msg_count):
+                                permille = (
+                                    int((cur_bytes / tot_bytes) * 1000)
+                                    if tot_bytes > 0
+                                    else 1000
+                                )
+                                pct = (
+                                    (cur_bytes / tot_bytes) * 100.0
+                                    if tot_bytes > 0
+                                    else 100.0
+                                )
+                                bname = os.path.basename(fname)
+                                self.file_progress_updated.emit(
+                                    permille,
+                                    1000,
+                                    f"Reading {bname}: {combinatory.format_bytes(cur_bytes)} / "
+                                    f"{combinatory.format_bytes(tot_bytes)} ({pct:.1f}%) — {msg_count:,} msgs",
+                                )
+
+                            def on_write_progress(written, total_unique):
+                                self.write_progress_updated.emit(
+                                    written,
+                                    max(total_unique, 1),
+                                    f"Writing Deduplicated MBOX [{short_rf}]: {written:,} / {total_unique:,} unique msgs",
+                                )
+                                if total_unique > 0:
+                                    self.plan_live_status_updated.emit(
+                                        rf,
+                                        f"{num_copies} / {num_copies}",
+                                        f"Writing {written:,}/{total_unique:,}",
+                                    )
+
+                            dedup_coro = dedup.dedupper(
+                                [
+                                    os.path.join(
+                                        pl.combinatory[planner_keys.plan_location][planner_keys.plan_output],
+                                        link_file,
+                                    )
+                                    for link_file in pl.combinatory[planner_keys.plan_file_map].keys()
+                                ],
+                                hash_db,
+                                use_disk_data_for_hash=use_disk,
+                                output_base_path=pl.combinatory[planner_keys.plan_location][planner_keys.plan_output],
+                                copy_progress_callback=on_copy_progress,
+                                file_progress_callback=on_file_progress,
+                                write_progress_callback=on_write_progress,
+                            )
+                            try:
+                                res_dir, res_plan, res_file = await combinatory.runDedup(
+                                    out_dir,
+                                    pl,
+                                    dedup_coro,
+                                    counter_update=make_plan_completed(rf),
+                                    semaphore=None,
+                                    dedup_hash_storage=hash_db,
+                                    use_disk_data_for_hash=use_disk,
+                                )
+                            except Exception:
+                                dedup_coro.close()
+                                raise
+                            if res_file is not None:
+                                status = "Deduplicated"
+                            else:
+                                err = (res_plan.combinatory or {}).get(planner_keys.plan_stats, {}).get("error", "Processing failed")
+                                status = f"Failed ({err})"
+                                self.record_log.emit(f"ERROR: Plan failed for {short_rf}: {err}")
+                            self.plan_dedup_updated.emit(rf, res_plan, status)
+                            return (res_dir, res_plan, res_file)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as ex:
+                        err_str = f"{type(ex).__name__}: {ex}"
+                        LOG.exception(f"Unhandled error while deduplicating {rf}: {ex}")
+                        self.record_log.emit(f"ERROR [{short_rf}]: {err_str}")
+                        if pl.combinatory is not None:
+                            stats = pl.combinatory.get(planner_keys.plan_stats, {})
+                            stats["error"] = err_str
+                            stats["traceback"] = traceback.format_exc()
+                            pl.combinatory[planner_keys.plan_stats] = stats
+                        self.plan_dedup_updated.emit(rf, pl, f"Failed ({err_str})")
+                        make_plan_completed(rf)()
+                        return (out_dir, pl, None)
 
                 dedup_workers.append(
                     asyncio.create_task(
@@ -327,6 +371,38 @@ class TbDedupRunner(QObject):
             self.record_log.emit("Deduplication cancelled by user.")
             self.operation_cancelled.emit("Deduplication cancelled by user.")
             raise
+        except Exception as ex:
+            LOG.exception(f"Fatal error during deduplication: {ex}")
+            self.record_log.emit(f"FATAL ERROR during deduplication: {ex}")
+            completed = []
+            for w_task in dedup_workers:
+                if w_task.done() and not w_task.cancelled() and w_task.exception() is None:
+                    completed.append(w_task.result())
+            self.worker_results = completed
+            self.dedup_complete.emit(
+                self.worker_results,
+                self.temp_directory,
+                self.reconstructed_root,
+            )
+            raise
+        finally:
+            all_closed, leaks = file_tracker.verify_all_closed(log_leaks=True)
+            if not all_closed:
+                leak_sample = ", ".join(
+                    f"{os.path.basename(f['path'])} ({f['caller']})"
+                    for f in leaks[:5]
+                )
+                if len(leaks) > 5:
+                    leak_sample += f" (+{len(leaks) - 5} more)"
+                LOG.warning(
+                    f"Unclosed files detected after deduplication run: {leak_sample}"
+                )
+                self.record_log.emit(
+                    f"WARNING: {len(leaks)} unclosed file(s) detected: {leak_sample}"
+                )
+            else:
+                LOG.info("All files verified closed.")
+                self.record_log.emit("All files verified closed.")
 
     async def move_results(
         self,
@@ -391,3 +467,40 @@ class TbDedupRunner(QObject):
             self.record_log.emit("Move operation cancelled by user.")
             self.operation_cancelled.emit("Move operation cancelled by user.")
             raise
+
+    def discover_disk_results(self, storage_location):
+        return combinatory.discover_disk_results(storage_location)
+
+    def inspect_storage_directory(self, storage_location):
+        return combinatory.inspect_storage_directory(storage_location)
+
+    def cleanup_storage_directory(self, storage_location, remove_working_files=False):
+        return combinatory.cleanup_storage_directory(
+            storage_location, remove_working_files=remove_working_files
+        )
+
+    def sync_with_disk_data(self, storage_location, folder_pattern="Inbox.sbd/"):
+        if not storage_location or not os.path.isdir(storage_location) or not self.preplanner:
+            return 0
+        plans_by_root = dict(self.preplanner.plans())
+        recovered_count = 0
+        recovered_results = []
+        for root_file, plan in plans_by_root.items():
+            out_dir = combinatory.get_plan_output_directory(
+                folder_pattern,
+                storage_location,
+                root_file,
+            )
+            plan_data, mbox_path = combinatory.check_plan_completed_on_disk(out_dir)
+            if plan_data is not None and mbox_path is not None:
+                plan.combinatory = plan_data.get("combinatory", plan.combinatory)
+                recovered_results.append((out_dir, plan, mbox_path))
+                self.plan_dedup_updated.emit(root_file, plan, "Deduplicated")
+                recovered_count += 1
+        if recovered_results:
+            self.worker_results = recovered_results
+            self.temp_directory = storage_location
+            self.record_log.emit(
+                f"Discovered {recovered_count} completed folder groups on disk in {storage_location}"
+            )
+        return recovered_count

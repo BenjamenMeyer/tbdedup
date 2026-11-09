@@ -14,8 +14,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 import asyncio
+import logging
 import os
 import os.path
+import sys
 
 from PySide6.QtCore import (
     QItemSelectionModel,
@@ -68,11 +70,27 @@ TREE_COLUMNS = [
 DIR_KEY_ROLE = Qt.UserRole + 1
 
 
+class QtLogHandler(logging.Handler):
+    """Logging handler that routes records directly into GUI log receipt."""
+
+    def __init__(self, callback):
+        super().__init__()
+        self.callback = callback
+
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            self.callback(msg)
+        except Exception:
+            self.handleError(record)
+
+
 class MainWindow(QMainWindow):
     record_log = Signal(str)
 
     def __init__(self, initial_options=None):
         super().__init__()
+        combinatory.ensure_max_open_files()
         self.runner = runner.TbDedupRunner()
         self.runner.record_log.connect(self.log_receipt)
         self.runner.progress_updated.connect(self.on_progress_updated)
@@ -99,6 +117,9 @@ class MainWindow(QMainWindow):
         self._leaf_stats = {}
         self._active_task = None
 
+        # Configure unified logging across Console, Log Window, and File
+        self._init_logging()
+
         self.setWindowTitle("Thunderbird MBox Deduplicator")
         self.resize(1200, 820)
 
@@ -118,6 +139,7 @@ class MainWindow(QMainWindow):
 
         self.lbl_storage = QLabel("Work/Storage Dir:")
         self.txt_storage_path = QLineEdit()
+        self.txt_storage_path.textChanged.connect(self.storage_path_changed)
         self.btn_storage_path = QPushButton("Select...")
         self.btn_storage_path.clicked.connect(self.select_storage_path)
         config_grid.addWidget(self.lbl_storage, 1, 0)
@@ -126,6 +148,7 @@ class MainWindow(QMainWindow):
 
         self.lbl_output = QLabel("Output Tree Dir:")
         self.txt_output_path = QLineEdit()
+        self.txt_output_path.textChanged.connect(self._update_action_button_states)
         self.btn_output_path = QPushButton("Select...")
         self.btn_output_path.clicked.connect(self.select_output_path)
         config_grid.addWidget(self.lbl_output, 2, 0)
@@ -239,6 +262,10 @@ class MainWindow(QMainWindow):
         self.btn_move.setEnabled(False)
         self.btn_move.clicked.connect(self.do_move)
 
+        self.btn_cleanup = QPushButton("Clean Up Storage...")
+        self.btn_cleanup.setEnabled(True)
+        self.btn_cleanup.clicked.connect(self.do_cleanup)
+
         self.btn_cancel = QPushButton("Cancel Operation")
         self.btn_cancel.setEnabled(False)
         self.btn_cancel.clicked.connect(self.do_cancel)
@@ -246,6 +273,7 @@ class MainWindow(QMainWindow):
         actions_layout.addWidget(self.btn_search)
         actions_layout.addWidget(self.btn_dedup)
         actions_layout.addWidget(self.btn_move)
+        actions_layout.addWidget(self.btn_cleanup)
         actions_layout.addWidget(self.btn_cancel)
         main_layout.addLayout(actions_layout)
 
@@ -264,29 +292,109 @@ class MainWindow(QMainWindow):
         if initial_options is not None and getattr(initial_options, "location", None):
             self.txt_path.setText(initial_options.location)
 
+    def _init_logging(self):
+        log_fmt = logging.Formatter(
+            fmt='[%(asctime)s][%(levelname)s][%(name)s]: %(message)s'
+        )
+        self._qt_log_handler = QtLogHandler(self.log_receipt)
+        self._qt_log_handler.setFormatter(log_fmt)
+        logging.getLogger().addHandler(self._qt_log_handler)
+
+        root_logger = logging.getLogger()
+        has_console = any(
+            isinstance(h, logging.StreamHandler) and not isinstance(h, QtLogHandler)
+            for h in root_logger.handlers
+        )
+        if not has_console:
+            console_h = logging.StreamHandler(sys.stdout)
+            console_h.setFormatter(log_fmt)
+            root_logger.addHandler(console_h)
+
+        log_file = os.path.join(os.getcwd(), "thunderbird_dedup.log")
+        try:
+            self._file_log_handler = logging.FileHandler(
+                log_file, mode="a", encoding="utf-8"
+            )
+            self._file_log_handler.setFormatter(log_fmt)
+            root_logger.addHandler(self._file_log_handler)
+        except Exception as ex:
+            self.log_receipt(f"Warning: could not open log file {log_file}: {ex}")
+
+        root_logger.setLevel(logging.INFO)
+
+    def is_running(self):
+        return self._active_task is not None and not self._active_task.done()
+
+    def _can_move_results(self):
+        if any(r[2] is not None for r in self.runner.worker_results):
+            return True
+        if self.runner.temp_directory and combinatory.discover_disk_results(self.runner.temp_directory):
+            return True
+        storage_text = self.txt_storage_path.text().strip()
+        if storage_text and combinatory.discover_disk_results(storage_text):
+            return True
+        return False
+
+    def _update_action_button_states(self):
+        running = self.is_running()
+        self.btn_cancel.setEnabled(running)
+
+        if running:
+            self.btn_search.setEnabled(False)
+            self.btn_dedup.setEnabled(False)
+            self.btn_move.setEnabled(False)
+            self.btn_cleanup.setEnabled(False)
+        else:
+            self.btn_cleanup.setEnabled(True)
+            source_path = self.txt_path.text().strip()
+            self.btn_search.setEnabled(os.path.isdir(source_path))
+            has_plans = (
+                self.runner.preplanner is not None and
+                self.runner.preplanner.plan_count() > 0
+            )
+            has_checked = len(self.get_checked_root_files()) > 0
+            self.btn_dedup.setEnabled(has_plans and has_checked)
+            self.btn_move.setEnabled(self._can_move_results())
+
+    def _update_dedup_button_state(self):
+        self._update_action_button_states()
+
     def _on_task_done(self, task):
         if self._active_task is task:
             self._active_task = None
-            self.btn_cancel.setEnabled(False)
+        try:
+            if not task.cancelled() and task.exception() is not None:
+                exc = task.exception()
+                LOG.error(f"Task encountered an error: {exc}")
+                self.record_log.emit(f"ERROR: {exc}")
+        except Exception:
+            pass
+        self._update_action_button_states()
 
     def _schedule_coro(self, coro):
-        self.btn_cancel.setEnabled(True)
         try:
             loop = asyncio.get_running_loop()
             task = loop.create_task(coro)
             self._active_task = task
+            self._update_action_button_states()
             task.add_done_callback(self._on_task_done)
             return task
         except RuntimeError:
+            self._active_task = None
             try:
+                self._update_action_button_states()
                 return asyncio.run(coro)
             finally:
                 self._active_task = None
-                self.btn_cancel.setEnabled(False)
+                self._update_action_button_states()
 
     def closeEvent(self, event):
         if self._active_task is not None and not self._active_task.done():
             self._active_task.cancel()
+        if hasattr(self, "_qt_log_handler"):
+            logging.getLogger().removeHandler(self._qt_log_handler)
+        if hasattr(self, "_file_log_handler"):
+            logging.getLogger().removeHandler(self._file_log_handler)
         super().closeEvent(event)
 
     def build_options(self):
@@ -347,12 +455,130 @@ class MainWindow(QMainWindow):
             self.record_log.emit("Cancelling current operation...")
             self._active_task.cancel()
 
+    @Slot()
+    def do_cleanup(self, storage_dir=None):
+        if not storage_dir or not isinstance(storage_dir, str):
+            storage_dir = self.txt_storage_path.text().strip()
+        if not storage_dir or not os.path.isdir(storage_dir):
+            storage_dir = QFileDialog.getExistingDirectory(
+                self,
+                "Select Work/Storage Directory to Clean Up",
+                self.txt_storage_path.text().strip() or os.getcwd(),
+            )
+            if not storage_dir:
+                return
+
+        src_dir = self.txt_path.text().strip()
+        if src_dir and os.path.abspath(storage_dir) == os.path.abspath(src_dir):
+            QMessageBox.critical(
+                self,
+                "Invalid Directory",
+                "The selected storage directory is the same as the source directory.\n"
+                "Cleanup cannot be performed on the source directory.",
+            )
+            return
+
+        inspection = combinatory.inspect_storage_directory(storage_dir)
+        num_symlinks = len(inspection["symlinks"])
+        num_files = len(inspection["working_files"])
+        num_dirs = len(inspection["directories"])
+
+        if num_symlinks == 0 and num_files == 0:
+            QMessageBox.information(
+                self,
+                "Clean Up Storage",
+                f"No symlinks or working files were found in:\n{storage_dir}",
+            )
+            return
+
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Clean Up Work/Storage Directory")
+        msg_box.setIcon(QMessageBox.Question)
+        msg_box.setText(
+            f"Directory:\n{storage_dir}\n\n"
+            f"Found {num_symlinks} symlink(s) pointing to source mail files, "
+            f"{num_files} working file(s), and {num_dirs} subdirectory(ies).\n\n"
+            "Choose a cleanup option:\n\n"
+            "• Remove Symlinks Only (Safe):\n"
+            "  Removes only the symlinks so the directory is safe to delete or inspect "
+            "outside of the tool without any risk to your source mail.\n\n"
+            "• Delete Working Files Too...:\n"
+            "  Removes symlinks and permanently deletes all generated working files "
+            "and directories in this storage location."
+        )
+
+        btn_symlinks_only = msg_box.addButton(
+            "Remove Symlinks Only (Safe)", QMessageBox.ActionRole
+        )
+        btn_delete_all = msg_box.addButton(
+            "Delete Working Files Too...", QMessageBox.DestructiveRole
+        )
+        btn_change_dir = msg_box.addButton(
+            "Choose Different Dir...", QMessageBox.ActionRole
+        )
+        btn_cancel = msg_box.addButton(QMessageBox.Cancel)
+        msg_box.setDefaultButton(btn_symlinks_only)
+
+        msg_box.exec()
+        clicked_btn = msg_box.clickedButton()
+
+        if clicked_btn == btn_cancel or clicked_btn is None:
+            return
+
+        if clicked_btn == btn_change_dir:
+            new_dir = QFileDialog.getExistingDirectory(
+                self,
+                "Select Work/Storage Directory to Clean Up",
+                storage_dir,
+            )
+            if new_dir:
+                self.do_cleanup(new_dir)
+            return
+
+        if clicked_btn == btn_symlinks_only:
+            res = combinatory.cleanup_storage_directory(
+                storage_dir, remove_working_files=False
+            )
+            msg = (
+                f"Storage cleanup completed: removed {res['symlinks_removed']} symlink(s) "
+                f"from {storage_dir}. It is now safe to delete or inspect outside of the tool."
+            )
+            self.log_receipt(msg)
+            self.status_bar.showMessage(
+                f"Removed {res['symlinks_removed']} symlink(s).", 5000
+            )
+            QMessageBox.information(self, "Cleanup Complete", msg)
+
+        elif clicked_btn == btn_delete_all:
+            confirm = QMessageBox.warning(
+                self,
+                "Confirm Permanent Deletion",
+                f"Are you sure you want to permanently delete all working files and directories in:\n\n"
+                f"{storage_dir}\n\n"
+                "This action cannot be undone.",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if confirm == QMessageBox.Yes:
+                res = combinatory.cleanup_storage_directory(
+                    storage_dir, remove_working_files=True
+                )
+                msg = (
+                    f"Storage cleanup completed: removed {res['symlinks_removed']} symlink(s), "
+                    f"{res['files_removed']} working file(s), and {res['dirs_removed']} directory(ies) "
+                    f"from {storage_dir}."
+                )
+                self.log_receipt(msg)
+                self.status_bar.showMessage(
+                    f"Deleted {res['symlinks_removed']} symlinks and {res['files_removed']} working files.",
+                    5000,
+                )
+                QMessageBox.information(self, "Cleanup Complete", msg)
+                self._update_action_button_states()
+
     @Slot(str)
     def on_operation_cancelled(self, message):
-        self.btn_cancel.setEnabled(False)
-        self.btn_search.setEnabled(os.path.exists(self.txt_path.text()))
-        self._update_dedup_button_state()
-        self.btn_move.setEnabled(len(self.runner.worker_results) > 0)
+        self._update_action_button_states()
         self._update_bar(self.progress_overall, 0, 100, f"Cancelled: {message}")
         self._update_bar(self.progress_copies, 0, 100, "Folder Copies: Cancelled")
         self._update_bar(self.progress_file, 0, 1000, "Current Copy Read: Cancelled")
@@ -362,12 +588,29 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def path_changed(self):
+        self._update_action_button_states()
         path = self.txt_path.text().strip()
         search_enabled = os.path.isdir(path)
-        self.btn_search.setEnabled(search_enabled)
-        self.btn_dedup.setEnabled(False)
-        self.btn_move.setEnabled(False)
         self.record_log.emit(f"Search enabled: {search_enabled}")
+
+    @Slot()
+    def storage_path_changed(self):
+        storage_dir = self.txt_storage_path.text().strip()
+        if (
+            storage_dir and
+            os.path.isdir(storage_dir) and
+            self.runner.preplanner is not None
+        ):
+            recovered = self.runner.sync_with_disk_data(
+                storage_dir, self.txt_folder_pattern.text().strip()
+            )
+            if recovered > 0:
+                self._sync_selection_statuses()
+                self._update_all_sbd_summaries()
+                self.record_log.emit(
+                    f"Recovered {recovered} completed plans from {storage_dir}"
+                )
+        self._update_action_button_states()
 
     def _choose_directory(self, line_edit, caption):
         current_path = line_edit.text().strip()
@@ -473,10 +716,21 @@ class MainWindow(QMainWindow):
                 "status": "Pending",
             }
 
+        storage_dir = self.txt_storage_path.text().strip()
+        if storage_dir and os.path.isdir(storage_dir):
+            recovered = self.runner.sync_with_disk_data(
+                storage_dir, self.txt_folder_pattern.text().strip()
+            )
+            if recovered > 0:
+                self._sync_selection_statuses()
+                self._update_all_sbd_summaries()
+                self.record_log.emit(
+                    f"Recovered {recovered} completed plans from {storage_dir}"
+                )
+
         self._update_all_sbd_summaries()
         self.tv_mbox_files.expandAll()
-        self._update_dedup_button_state()
-        self.btn_move.setEnabled(False)
+        self._update_action_button_states()
 
     def _compute_sbd_summary(self, dir_key):
         prefix = dir_key + "/"
@@ -631,7 +885,7 @@ class MainWindow(QMainWindow):
         return checked
 
     def _update_dedup_button_state(self):
-        self.btn_dedup.setEnabled(len(self.get_checked_root_files()) > 0)
+        self._update_action_button_states()
 
     @Slot()
     def select_all_folders(self):
@@ -756,6 +1010,12 @@ class MainWindow(QMainWindow):
                 leaf["unique_msgs"] = unique_msgs
                 leaf["dedup_bytes"] = dedup_bytes
         row_items[7].setText(status)
+        if status.startswith("Failed"):
+            err_details = stats.get("error", status)
+            row_items[7].setToolTip(f"{status}\n{stats.get('traceback', '')}")
+            self.txt_logs.append(f"FAILED: {root_file} -> {err_details}")
+        else:
+            row_items[7].setToolTip("")
         if leaf is not None:
             leaf["status"] = status
             self._update_ancestor_sbd_summaries(root_file)
@@ -764,8 +1024,7 @@ class MainWindow(QMainWindow):
     def on_dedup_completed(self, worker_results, temp_directory, reconstructed_root):
         if not self.txt_output_path.text().strip():
             self.txt_output_path.setText(reconstructed_root)
-        self._update_dedup_button_state()
-        self.btn_move.setEnabled(len(worker_results) > 0)
+        self._update_action_button_states()
 
     @Slot()
     def do_move(self):
@@ -773,6 +1032,19 @@ class MainWindow(QMainWindow):
         target_root = (
             options.output_location or self.runner.reconstructed_root
         )
+        # If in-memory results are empty, recover from disk run data
+        if not any(r[2] is not None for r in self.runner.worker_results):
+            storage_path = (
+                self.runner.temp_directory or
+                self.txt_storage_path.text().strip()
+            )
+            disk_results = combinatory.discover_disk_results(storage_path)
+            if disk_results:
+                self.runner.worker_results = disk_results
+                self.record_log.emit(
+                    f"Recovered {len(disk_results)} deduplicated folder outputs from {storage_path} for moving."
+                )
+
         summary = combinatory.build_summary_report(
             options,
             self.runner.temp_directory,
@@ -803,3 +1075,4 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def on_move_completed(self, operation_json_path):
         self.record_log.emit(f"Operation completed: {operation_json_path}")
+        self._update_action_button_states()

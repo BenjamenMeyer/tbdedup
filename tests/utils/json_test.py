@@ -48,3 +48,6 @@ class TestUtilsJson(base.TestCase):
             out_json = os.path.join(cwd.temp_dir.name, "out.json")
             tb_json.dump_to_file(out_json, {"obj": CustomJsonObj()})
             self.assertTrue(os.path.isfile(out_json))
+            loaded = tb_json.load_from_file(out_json)
+            self.assertEqual(loaded, {"obj": {"custom": "value"}})
+            self.assertEqual(tb_json.load_from_string('{"k": 1}'), {"k": 1})

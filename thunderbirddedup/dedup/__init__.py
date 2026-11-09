@@ -26,6 +26,7 @@ from thunderbirddedup import (
 
 from thunderbirddedup.utils import (
     encoder,
+    file_tracker,
     time,
 )
 
@@ -60,38 +61,43 @@ async def processFile(
     counter = 0
     try:
         LOG.info(f'Processing records...')
-        with storage.transaction():
-            for msg in box.buildSummary():
-                try:
-                    storage.add_message(
-                        msg.getHash(diskHash=False),  # hash for comparisons
-                        msg.getMsgId(),  # id
-                        filename,  # location
-                        msg.getMessageIDHeader(),  # 2nd id from the headers
-                        msg.getMessageIDHeaderHash(),  # 2nd hash
-                        msg.start_offset,
-                        msg.end_offset,
-                        msg.getHash(diskHash=True),  # hash to ensure we read the right thing
-                        msg.getMozillaStatus(),
-                        msg.getMozillaStatus2(),
-                        msg.getMozillaKeys(),
-                    )
-                    counter = counter + 1
-                    if counter % 250 == 0:
-                        if file_progress_callback is not None:
-                            file_progress_callback(
-                                filename,
-                                msg.end_offset,
-                                total_bytes,
-                                counter,
-                            )
-                        await asyncio.sleep(0)
-                    if time.check_yield(counter, 10000) == 0:
-                        LOG.info(f"Record Counter: {counter}")
+        summary_gen = box.buildSummary()
+        try:
+            with storage.transaction():
+                for msg in summary_gen:
+                    try:
+                        storage.add_message(
+                            msg.getHash(diskHash=False),  # hash for comparisons
+                            msg.getMsgId(),  # id
+                            filename,  # location
+                            msg.getMessageIDHeader(),  # 2nd id from the headers
+                            msg.getMessageIDHeaderHash(),  # 2nd hash
+                            msg.start_offset,
+                            msg.end_offset,
+                            msg.getHash(diskHash=True),  # hash to ensure we read the right thing
+                            msg.getMozillaStatus(),
+                            msg.getMozillaStatus2(),
+                            msg.getMozillaKeys(),
+                        )
+                        counter = counter + 1
+                        if counter % 250 == 0:
+                            if file_progress_callback is not None:
+                                file_progress_callback(
+                                    filename,
+                                    msg.end_offset,
+                                    total_bytes,
+                                    counter,
+                                )
+                            await asyncio.sleep(0)
+                        if time.check_yield(counter, 10000) == 0:
+                            LOG.info(f"Record Counter: {counter}")
 
-                except Exception:
-                    LOG.exception(f'File: {filename} - Message ID: {msg.getMsgId()} - Start: {msg.start_offset} - End: {msg.end_offset}')
-                    raise
+                    except Exception:
+                        LOG.exception(f'File: {filename} - Message ID: {msg.getMsgId()} - Start: {msg.start_offset} - End: {msg.end_offset}')
+                        raise
+        finally:
+            if hasattr(summary_gen, "close"):
+                summary_gen.close()
 
     except mbox.ErrInvalidFileFormat as ex:
         LOG.error(f'Invalid file format detected: {ex}')
@@ -188,7 +194,7 @@ async def dedupper(
         )
 
         LOG.info(f"Writing unique records to {output_filename}")
-        with open(output_filename, "wb") as output_data:
+        with file_tracker.open_file(output_filename, "wb") as output_data:
             wcounter = 0
             for unique_hashid in storage.get_message_hashes(use_disk=use_disk_data_for_hash):
                 msgs_for_hash = list(
@@ -204,7 +210,7 @@ async def dedupper(
                     msgDataHash = msgDataHasher.hexdigest()
                     if msgDataHash != msg_for_hash['disk_hash']:
                         LOG.info(f'Unable to rebuild message with hash {unique_hashid} - got {msgDataHash} - {msgData}')
-                        with open(f"{msgDataHash}.orig-{unique_hashid}.mboxrecord", "wb") as msg_recorder:
+                        with file_tracker.open_file(f"{msgDataHash}.orig-{unique_hashid}.mboxrecord", "wb") as msg_recorder:
                             msg_recorder.write(msgData)
                             msg_recorder.flush()
                         continue
